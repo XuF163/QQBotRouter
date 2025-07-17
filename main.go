@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
-	os"
+	"os"
 
 	"go.uber.org/zap"
 
@@ -60,7 +60,7 @@ func main() {
 
 	// 4. Set up HTTP/S servers
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", handler.NewWebhookHandler(logger)) // Pass logger to handler
+	mux.Handle("/", handler.NewWebhookHandler(logger))
 
 	server := &http.Server{
 		Addr:      ":443",
