@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"go.uber.org/zap"
 )
@@ -17,11 +18,23 @@ type WebhookPacket struct {
 
 type ChallengeData struct {
 	PlainToken string `json:"plain_token"`
+	EventTs    string `json:"event_ts"`
 }
 
 type ChallengeResponse struct {
 	PlainToken string `json:"plain_token"`
 	Signature  string `json:"signature"`
+}
+
+// generateSeed generates a 32-byte seed from the secret according to QQ official documentation
+func generateSeed(secret string) []byte {
+	// 按照QQ官方文档的逻辑：重复secret直到长度达到32字节
+	seed := secret
+	for len(seed) < ed25519.SeedSize {
+		seed = strings.Repeat(seed, 2)
+	}
+	// 截取前32字节
+	return []byte(seed[:ed25519.SeedSize])
 }
 
 // VerifySignature checks the ed25519 signature from the request headers.
@@ -41,20 +54,15 @@ func VerifySignature(logger *zap.Logger, header http.Header, body []byte, secret
 		return false
 	}
 
-	seed := []byte(secret)
-	if len(seed) != ed25519.SeedSize {
-		logger.Error("Invalid secret size for verification",
-			zap.Int("expected_size", ed25519.SeedSize),
-			zap.Int("actual_size", len(seed)))
-		return false
-	}
+	// 按照QQ官方文档生成seed
+	seed := generateSeed(secret)
 	pubKey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
 
 	message := []byte(timestamp + string(body))
 	return ed25519.Verify(pubKey, message, signature)
 }
 
-// HandleChallenge handles the OpCode 1 (SIGN_VERIFY) challenge.
+// HandleChallenge handles the OpCode 13 (QQ official validation) challenge.
 func HandleChallenge(logger *zap.Logger, rw http.ResponseWriter, r *http.Request, data json.RawMessage, secret string) {
 	var challengeData ChallengeData
 	if err := json.Unmarshal(data, &challengeData); err != nil {
@@ -63,18 +71,19 @@ func HandleChallenge(logger *zap.Logger, rw http.ResponseWriter, r *http.Request
 		return
 	}
 
-	timestamp := r.Header.Get("x-signature-timestamp")
-	message := []byte(timestamp + challengeData.PlainToken)
+	// 按照QQ官方文档：event_ts + plain_token
+	message := []byte(challengeData.EventTs + challengeData.PlainToken)
 
-	seed := []byte(secret)
-	if len(seed) != ed25519.SeedSize {
-		logger.Error("Invalid secret size for signing",
-			zap.Int("expected_size", ed25519.SeedSize),
-			zap.Int("actual_size", len(seed)))
+	// 按照QQ官方文档生成seed
+	seed := generateSeed(secret)
+	// 使用ed25519.GenerateKey的方式生成私钥
+	reader := strings.NewReader(string(seed))
+	_, privKey, err := ed25519.GenerateKey(reader)
+	if err != nil {
+		logger.Error("Failed to generate ed25519 key", zap.Error(err))
 		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	privKey := ed25519.NewKeyFromSeed(seed)
 
 	signature := ed25519.Sign(privKey, message)
 

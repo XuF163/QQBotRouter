@@ -49,6 +49,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Set default ports if not configured
+	if cfg.HTTPSPort == "" {
+		cfg.HTTPSPort = "8443"
+	}
+	if cfg.HTTPPort == "" {
+		cfg.HTTPPort = "80"
+	}
+
 	// Initialize logger based on config
 	initLogger(cfg.LogLevel)
 
@@ -63,21 +71,21 @@ func main() {
 	mux.Handle("/", handler.NewWebhookHandler(logger))
 
 	server := &http.Server{
-		Addr:      ":443",
+		Addr:      ":" + cfg.HTTPSPort,
 		Handler:   mux,
 		TLSConfig: certManager.TLSConfig(),
 	}
 
 	// 5. Start HTTP server for ACME challenges
 	go func() {
-		logger.Info("Starting HTTP server on :80 for ACME challenges...")
-		if err := http.ListenAndServe(":80", certManager.HTTPHandler(nil)); err != nil {
+		logger.Info("Starting HTTP server for ACME challenges...", zap.String("port", cfg.HTTPPort))
+		if err := http.ListenAndServe(":"+cfg.HTTPPort, certManager.HTTPHandler(nil)); err != nil {
 			logger.Fatal("HTTP server failed", zap.Error(err))
 		}
 	}()
 
 	// 6. Start HTTPS server
-	logger.Info("Starting HTTPS server on :443...")
+	logger.Info("Starting HTTPS server...", zap.String("port", cfg.HTTPSPort))
 	if err := server.ListenAndServeTLS("", ""); err != nil {
 		logger.Fatal("HTTPS server failed", zap.Error(err))
 	}

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -13,9 +14,11 @@ import (
 
 // --- Structs for Configuration ---
 type Config struct {
-	LogLevel string                  `yaml:"log_level"`
-	Domains  []string                `yaml:"domains"`
-	Bots     map[string]DomainConfig `yaml:"bots"`
+	LogLevel  string                  `yaml:"log_level"`
+	HTTPSPort string                  `yaml:"https_port"`
+	HTTPPort  string                  `yaml:"http_port"`
+	Domains   []string                `yaml:"domains"`
+	Bots      map[string]DomainConfig `yaml:"bots"`
 }
 
 type DomainConfig struct {
@@ -97,6 +100,11 @@ func GetBotConfig(host, path string) (Bot, bool) {
 		return Bot{}, false
 	}
 
+	// 去除端口号，只保留域名部分
+	if colonIndex := strings.Index(host, ":"); colonIndex != -1 {
+		host = host[:colonIndex]
+	}
+
 	domainConfig, ok := currentConfig.Bots[host]
 	if !ok {
 		return Bot{}, false
@@ -114,10 +122,10 @@ func GetBotConfig(host, path string) (Bot, bool) {
 }
 
 func GetDomains() []string {
-    configLock.RLock()
-    defer configLock.RUnlock()
-    if currentConfig == nil {
-        return nil
-    }
-    return currentConfig.Domains
+	configLock.RLock()
+	defer configLock.RUnlock()
+	if currentConfig == nil {
+		return nil
+	}
+	return currentConfig.Domains
 }

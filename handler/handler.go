@@ -64,15 +64,30 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	// 5. Handle the request based on the operation code
 	switch packet.Op {
-	case 1: // Challenge-Response
-		h.logger.Info("Handling challenge request",
+	case 1: // Challenge-Response (legacy)
+		h.logger.Info("Handling legacy challenge request",
+			zap.String("host", r.Host),
+			zap.String("path", r.URL.Path))
+		HandleChallenge(h.logger, rw, r, packet.D, bot.Secret)
+	case 13: // QQ Official Callback Validation
+		h.logger.Info("Handling QQ official callback validation",
 			zap.String("host", r.Host),
 			zap.String("path", r.URL.Path))
 		HandleChallenge(h.logger, rw, r, packet.D, bot.Secret)
 	case 0: // Event Dispatch
-		h.logger.Info("Handling event dispatch",
-			zap.String("host", r.Host),
-			zap.String("path", r.URL.Path))
+		// Format JSON for better readability
+		var prettyJSON bytes.Buffer
+		if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
+			h.logger.Info("Handling event dispatch",
+				zap.String("host", r.Host),
+				zap.String("path", r.URL.Path),
+				zap.String("message_content", string(body)))
+		} else {
+			h.logger.Info("Handling event dispatch",
+				zap.String("host", r.Host),
+				zap.String("path", r.URL.Path),
+				zap.String("message_content", "\n"+prettyJSON.String()))
+		}
 		rw.WriteHeader(http.StatusOK)
 		for _, dest := range bot.ForwardTo {
 			go forwarder.ForwardRequest(h.logger, dest, body, r.Header)

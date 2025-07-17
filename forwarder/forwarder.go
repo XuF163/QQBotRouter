@@ -22,7 +22,7 @@ func ForwardRequest(logger *zap.Logger, destination string, body []byte, header 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error("Failed to forward request",
+		logger.Debug("Failed to forward request (this is normal for backup endpoints)",
 			zap.String("destination", destination),
 			zap.Error(err))
 		return
