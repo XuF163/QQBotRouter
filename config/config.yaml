@@ -1,0 +1,30 @@
+log_level: "development"
+#或者 production
+domains:
+  - "your-domain.com"
+  - "another-domain.net"
+
+# 机器人配置
+bots:
+  your-domain.com:
+    # 默认机器人: 如果请求路径在下面的 "paths" 中找不到匹配项, 则使用此配置
+    secret: "default_bot_secret_for_domain_1"
+    forward_to:
+      - "http://127.0.0.1:8080/default"
+
+    # 基于路径的特定机器人配置
+    paths:
+      /webhook/bot_a:
+        secret: "secret_for_bot_a_on_same_domain"
+        forward_to:
+          - "http://127.0.0.1:9001/bot_a_endpoint"
+      /webhook/bot_b:
+        secret: "secret_for_bot_b_on_same_domain"
+        forward_to:
+          - "http://127.0.0.1:9002/bot_b_endpoint"
+
+  another-domain.net:
+    # 这个域名只有一个默认机器人, 没有基于路径的配置
+    secret: "secret_for_another_domain_bot"
+    forward_to:
+      - "http://127.0.0.1:8082/webhook"
