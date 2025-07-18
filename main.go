@@ -10,6 +10,7 @@ import (
 	"qqbotrouter/autocert"
 	"qqbotrouter/config"
 	"qqbotrouter/handler"
+	"qqbotrouter/init"
 )
 
 var logger *zap.Logger
@@ -41,8 +42,15 @@ func initLogger(logLevel string) {
 }
 
 func main() {
+	// Check and create config files if they don't exist
+	if err := init.CheckConfig(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to check/create config files: %v\n", err)
+		os.Exit(1)
+	}
+
 	// 1. Load initial configuration to get log level
 	cfg, err := config.Load("config/config.yaml")
+
 	if err != nil {
 		// Cannot use logger yet, fall back to standard log or fmt
 		fmt.Fprintf(os.Stderr, "Failed to load initial config: %v\n", err)
