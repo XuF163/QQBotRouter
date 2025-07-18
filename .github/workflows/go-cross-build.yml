@@ -1,0 +1,93 @@
+# 工作流名称
+name: Go Cross-Platform Build
+
+# 触发工作流的事件
+on:
+  # 1. 当代码推送到 master 分支时
+  push:
+    branches: [ "master" ]
+  # 2. 当有 Pull Request 指向 master 分支时
+  pull_request:
+    branches: [ "master" ]
+  # 3. 当创建新的 Release 时 (推荐用于发布二进制文件)
+  release:
+    types: [created]
+
+# 环境变量，方便统一修改
+env:
+  # 你的主程序包路径，如果是根目录，则为 .
+  # 如果是 cmd/myapp，则填写 ./cmd/myapp
+  GO_MAIN_PATH: '.'
+  # 产物的基础名称
+  BINARY_NAME: '429RouterBeat'
+
+
+jobs:
+  build:
+    # Job 名称
+    name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
+    # 运行此 Job 的虚拟机环境
+    runs-on: ubuntu-latest
+    
+    # 构建矩阵，用于交叉编译
+    strategy:
+      matrix:
+        # 定义不同平台的组合
+        # goos: 目标操作系统
+        # goarch: 目标架构
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: darwin # macOS
+            goarch: amd64
+          - goos: darwin # macOS Apple Silicon
+            goarch: arm64
+
+    # Job 中的步骤
+    steps:
+      # 第一步：检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 第二步：设置 Go 环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # 指定 Go 版本，或使用 go.mod 文件中的版本
+          go-version: '1.22' 
+          # 可选：缓存依赖项以加快后续构建速度
+          cache: true
+
+      # 第三步：编译二进制文件
+      - name: Build
+        # 使用 env 命令设置 GOOS 和 GOARCH 环境变量进行交叉编译
+        run: |
+          # 构造包含日期的基础文件名
+          BASE_NAME="${{ env.BINARY_NAME }}-$(date +'%Y-%m-%d')"
+
+          # 根据平台构建最终的输出文件名
+          OUTPUT_NAME="${BASE_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ ${{ matrix.goos }} == 'windows' ]; then
+            OUTPUT_NAME+='.exe'
+          fi
+          
+          # 执行编译命令
+          # -v: 打印编译的包名
+          # -ldflags="-s -w": 减小二进制文件大小 (可选)
+          # -o: 指定输出文件名
+          echo "Building binary as $OUTPUT_NAME"
+          env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -ldflags="-s -w" -o "$OUTPUT_NAME" ${{ env.GO_MAIN_PATH }}
+
+      # 第四步：上传编译产物
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # 产物的名称，会显示在 GitHub Actions 页面
+          # 格式: 429RouterBeat-YYYY-MM-DD-linux-amd64
+          name: "${{ env.BINARY_NAME }}-$(date +'%Y-%m-%d')-${{ matrix.goos }}-${{ matrix.goarch }}"
+          # 要上传的文件路径，使用通配符 * 来匹配带 .exe 和不带 .exe 的文件
+          path: "${{ env.BINARY_NAME }}-$(date +'%Y-%m-%d')-${{ matrix.goos }}-${{ matrix.goarch }}*"
