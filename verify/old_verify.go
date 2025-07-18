@@ -1,4 +1,4 @@
-package main
+package verify
 
 import (
 	"bytes"
@@ -108,7 +108,7 @@ func handleValidation(rw http.ResponseWriter, r *http.Request, botSecret string)
 	rw.Write(rspBytes)
 }
 
-func main() {
+func StartOldVerifyServer() {
 	// 设置botSecret，实际使用时需要替换成你的秘钥
 	botSecret := "4Qm8VsFczMk8WuIg5UtIh6WwMmCc2TuL"
 
@@ -120,5 +120,3 @@ func main() {
 	log.Println("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
-
-

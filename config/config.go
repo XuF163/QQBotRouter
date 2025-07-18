@@ -2,36 +2,33 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
-	"net"
-	"time"
+	"net/url"
+	"os"
+	"strings"
 
 	"go.uber.org/zap"
-	"golang.org/x/crypto/acme/autocert"
 	"gopkg.in/yaml.v3"
+
+	"qqbotrouter/autocert"
 )
 
-// Config represents the application configuration
+// Config represents the main configuration structure
 type Config struct {
-	LogLevel  string         `yaml:"log_level"`
-	HTTPSPort string         `yaml:"https_port"`
-	HTTPPort  string         `yaml:"http_port"`
-	Domains   []string       `yaml:"domains"`
-	Bots      map[string]Bot `yaml:"bots"`
+	LogLevel  string               `yaml:"log_level"`
+	HTTPSPort string               `yaml:"https_port"`
+	HTTPPort  string               `yaml:"http_port"`
+	Bots      map[string]BotConfig `yaml:"bots"`
 }
 
-// Bot represents bot configuration
-type Bot struct {
-	Secret    string         `yaml:"secret"`
-	ForwardTo []string       `yaml:"forward_to"`
-	Paths     map[string]Bot `yaml:"paths,omitempty"`
+// BotConfig represents individual bot configuration
+type BotConfig struct {
+	Secret    string   `yaml:"secret"`
+	ForwardTo []string `yaml:"forward_to"`
 }
-
-var globalConfig *Config
 
 // Load loads configuration from the specified file
-func Load(filename string) (*Config, error) {
-	data, err := ioutil.ReadFile(filename)
+func Load(configPath string) (*Config, error) {
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -41,57 +38,121 @@ func Load(filename string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Store globally for GetBotConfig
-	globalConfig = &config
 	return &config, nil
 }
 
-// GetBotConfig returns bot configuration for the given host and path
-func GetBotConfig(host, path string) (Bot, bool) {
-	if globalConfig == nil {
-		return Bot{}, false
-	}
+// GetDomains extracts unique domains from bot configurations
+func (c *Config) GetDomains() []string {
+	domainSet := make(map[string]bool)
 
-	// Remove port from host if present (e.g., "test.genshin.icu:8443" -> "test.genshin.icu")
-	hostname, _, err := net.SplitHostPort(host)
-	if err != nil {
-		// If SplitHostPort fails, assume host doesn't contain port
-		hostname = host
-	}
+	for webhookURL := range c.Bots {
+		// Parse the webhook URL to extract domain
+		if !strings.Contains(webhookURL, "://") {
+			// Add https:// prefix if not present
+			webhookURL = "https://" + webhookURL
+		}
 
-	// First check if there's a bot configuration for this host
-	bot, exists := globalConfig.Bots[hostname]
-	if !exists {
-		return Bot{}, false
-	}
+		parsedURL, err := url.Parse(webhookURL)
+		if err != nil {
+			continue // Skip invalid URLs
+		}
 
-	// If there are path-specific configurations, check for a match
-	if bot.Paths != nil {
-		if pathBot, pathExists := bot.Paths[path]; pathExists {
-			return pathBot, true
+		domain := parsedURL.Hostname()
+		if domain != "" {
+			domainSet[domain] = true
 		}
 	}
 
-	// Return the default bot configuration for this host
-	return bot, true
+	domains := make([]string, 0, len(domainSet))
+	for domain := range domainSet {
+		domains = append(domains, domain)
+	}
+
+	return domains
 }
 
 // Watch watches for configuration file changes and reloads
-func Watch(filename string, certManager *autocert.Manager, logger *zap.Logger) {
-	// Simple file watching implementation
-	// In production, you might want to use a more sophisticated file watcher
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+// Note: File watching is disabled in this simplified version
+func Watch(configPath string, certManager *autocert.Manager, logger *zap.Logger) {
+	logger.Info("Config file watching is disabled in this version", zap.String("path", configPath))
+	// TODO: Implement file watching when fsnotify dependency is available
+}
 
-	for {
-		select {
-		case <-ticker.C:
-			if info, err := ioutil.ReadFile(filename); err == nil {
-				// Simple check - in real implementation you'd check file modification time
-				if len(info) > 0 {
-					logger.Debug("Config file check completed")
-				}
+// GetBotConfig returns the bot configuration for a given webhook URL
+func (c *Config) GetBotConfig(webhookURL string) (BotConfig, bool) {
+	botConfig, exists := c.Bots[webhookURL]
+	return botConfig, exists
+}
+
+// Validate validates the configuration
+func (c *Config) Validate() error {
+	if len(c.Bots) == 0 {
+		return fmt.Errorf("no bots configured")
+	}
+
+	for webhookURL, botConfig := range c.Bots {
+		if botConfig.Secret == "" {
+			return fmt.Errorf("bot %s has empty secret", webhookURL)
+		}
+
+		if len(botConfig.ForwardTo) == 0 {
+			return fmt.Errorf("bot %s has no forward_to targets", webhookURL)
+		}
+
+		// Validate forward_to URLs
+		for _, target := range botConfig.ForwardTo {
+			if _, err := url.Parse(target); err != nil {
+				return fmt.Errorf("bot %s has invalid forward_to URL %s: %w", webhookURL, target, err)
 			}
 		}
 	}
+
+	return nil
+}
+
+// SetDefaults sets default values for missing configuration fields
+func (c *Config) SetDefaults() {
+	if c.LogLevel == "" {
+		c.LogLevel = "development"
+	}
+
+	if c.HTTPSPort == "" {
+		c.HTTPSPort = "8443"
+	}
+
+	if c.HTTPPort == "" {
+		c.HTTPPort = "8444"
+	}
+}
+
+// Global configuration instance
+var globalConfig *Config
+
+// SetGlobalConfig sets the global configuration instance
+func SetGlobalConfig(cfg *Config) {
+	globalConfig = cfg
+}
+
+// GetBotConfig returns the bot configuration for a given host and path
+// This is a package-level function that uses the global configuration
+func GetBotConfig(host, path string) (BotConfig, bool) {
+	if globalConfig == nil {
+		return BotConfig{}, false
+	}
+
+	// Construct the webhook URL from host and path
+	webhookURL := host + path
+
+	// Try exact match first
+	if botConfig, exists := globalConfig.Bots[webhookURL]; exists {
+		return botConfig, true
+	}
+
+	// Try with https:// prefix
+	httpsURL := "https://" + webhookURL
+	if botConfig, exists := globalConfig.Bots[httpsURL]; exists {
+		return botConfig, true
+	}
+
+	return BotConfig{}, false
 }

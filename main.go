@@ -49,13 +49,16 @@ func main() {
 	}
 
 	// 1. Load initial configuration to get log level
-	cfg, err := config.Load("config/config.yaml")
+	cfg, err := config.Load("config.yaml")
 
 	if err != nil {
 		// Cannot use logger yet, fall back to standard log or fmt
 		fmt.Fprintf(os.Stderr, "Failed to load initial config: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Set global configuration for handler access
+	config.SetGlobalConfig(cfg)
 
 	// Set default ports if not configured
 	if cfg.HTTPSPort == "" {
@@ -68,11 +71,13 @@ func main() {
 	// Initialize logger based on config
 	initLogger(cfg.LogLevel)
 
-	// 2. Configure autocert manager
-	certManager := autocert.NewManager(cfg.Domains, "secret-dir")
+	// 2. Configure autocert manager with domains extracted from bot configurations
+	domains := cfg.GetDomains()
+	logger.Info("Extracted domains for SSL certificates", zap.Strings("domains", domains))
+	certManager := autocert.NewManager(domains, "secret-dir")
 
 	// 3. Start config hot-reloader
-	go config.Watch("config/config.yaml", certManager, logger)
+	go config.Watch("config.yaml", certManager, logger)
 
 	// 4. Set up HTTP/S servers
 	mux := http.NewServeMux()
