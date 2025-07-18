@@ -3,13 +3,11 @@ name: Go Cross-Platform Build and Release
 
 # 触发工作流的事件
 on:
-  # push 事件：当推送到 master 分支或 v*.*.* 格式的标签时触发
   push:
     branches:
       - 'master'
     tags:
       - 'v*.*.*'
-  # pull_request 事件：当有 PR 指向 master 分支时触发
   pull_request:
     branches:
       - 'master'
@@ -47,6 +45,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          # 如果 tar 错误持续出现，请将下一行改为 cache: false
           cache: true
 
       - name: Prepare file names
@@ -70,10 +69,12 @@ jobs:
           echo "Building binary as ${{ env.OUTPUT_NAME }}"
           env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -ldflags="-s -w" -o "${{ env.OUTPUT_NAME }}" ${{ env.GO_MAIN_PATH }}
 
+      # 修正: 为每个产物提供唯一的名字来避免冲突
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          # 例如: artifact-linux-amd64
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ env.OUTPUT_NAME }}
 
   # ==================================
@@ -83,19 +84,23 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    # 关键：只有在创建 tag 时才运行此 job
     if: startsWith(github.ref, 'refs/tags/')
     
     steps:
+      # 修正: 使用通配符下载所有以 artifact- 开头的产物
       - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
-          name: binaries
+          # 指定下载后文件存放的目录
           path: ./binaries
+          # 匹配所有由 build job 上传的产物
+          pattern: artifact-*
+          merge-multiple: true # 将所有下载的产物合并到 path 指定的单个目录中
 
       - name: Create Release and Upload Assets
         uses: ncipollo/release-action@v1
         with:
+          # 从下载好的 ./binaries 目录中上传所有文件
           artifacts: "./binaries/*"
           generateReleaseNotes: true
           token: ${{ secrets.GITHUB_TOKEN }}
