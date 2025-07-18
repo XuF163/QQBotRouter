@@ -2,9 +2,11 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -64,17 +66,17 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	// 5. Handle the request based on the operation code
 	switch packet.Op {
-	case 1: // Challenge-Response (legacy)
+	case OpLegacyChallenge: // Challenge-Response (legacy)
 		h.logger.Info("Handling legacy challenge request",
 			zap.String("host", r.Host),
 			zap.String("path", r.URL.Path))
 		HandleChallenge(h.logger, rw, r, packet.D, bot.Secret)
-	case 13: // QQ Official Callback Validation
+	case OpCallbackValidation: // QQ Official Callback Validation
 		h.logger.Info("Handling QQ official callback validation",
 			zap.String("host", r.Host),
 			zap.String("path", r.URL.Path))
 		HandleChallenge(h.logger, rw, r, packet.D, bot.Secret)
-	case 0: // Event Dispatch
+	case OpEventDispatch: // Event Dispatch
 		// Format JSON for better readability
 		var prettyJSON bytes.Buffer
 		if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
@@ -88,15 +90,74 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 				zap.String("path", r.URL.Path),
 				zap.String("message_content", "\n"+prettyJSON.String()))
 		}
-		rw.WriteHeader(http.StatusOK)
-		for _, dest := range bot.ForwardTo {
-			go forwarder.ForwardRequest(h.logger, dest, body, r.Header)
+
+		// Forward to multiple destinations and wait for results
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		results := forwarder.ForwardToMultipleDestinations(ctx, h.logger, bot.ForwardTo, body, r.Header, 12*time.Second)
+
+		// Check if at least one forward was successful
+		anySuccess := false
+		successCount := 0
+		for _, result := range results {
+			if result.Success {
+				anySuccess = true
+				successCount++
+			}
 		}
-	case 11: // Heartbeat
+
+		h.logger.Info("Forward results summary",
+			zap.Int("total_destinations", len(bot.ForwardTo)),
+			zap.Int("successful_forwards", successCount),
+			zap.Bool("any_success", anySuccess))
+
+		// Generate ACK response based on forward results
+		ackResponse := GenDispatchACK(anySuccess)
+
+		// Set content type and write ACK response
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusOK)
+
+		if anySuccess {
+			h.logger.Info("Returning success ACK to platform",
+				zap.String("host", r.Host),
+				zap.String("path", r.URL.Path),
+				zap.Int("successful_forwards", successCount))
+		} else {
+			h.logger.Warn("All forwards failed, but returning success ACK to prevent platform retry",
+				zap.String("host", r.Host),
+				zap.String("path", r.URL.Path),
+				zap.Strings("failed_destinations", bot.ForwardTo))
+		}
+
+		if _, err := rw.Write(ackResponse); err != nil {
+			h.logger.Error("Failed to write ACK response",
+				zap.String("host", r.Host),
+				zap.String("path", r.URL.Path),
+				zap.Error(err))
+		}
+	case OpHeartbeat: // Heartbeat
 		h.logger.Info("Received Heartbeat",
 			zap.String("host", r.Host),
 			zap.String("path", r.URL.Path))
+
+		// Extract sequence number from packet data
+		var seq uint32
+		if err := json.Unmarshal(packet.D, &seq); err != nil {
+			h.logger.Warn("Failed to parse heartbeat sequence, using 0",
+				zap.Error(err))
+			seq = 0
+		}
+
+		// Generate and send heartbeat ACK
+		heartbeatACK := GenHeartbeatACK(seq)
+		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusOK)
+		if _, err := rw.Write(heartbeatACK); err != nil {
+			h.logger.Error("Failed to write heartbeat ACK",
+				zap.Error(err))
+		}
 	default:
 		h.logger.Warn("Received unknown op code",
 			zap.Int("op_code", packet.Op),

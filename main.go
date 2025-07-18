@@ -10,7 +10,7 @@ import (
 	"qqbotrouter/autocert"
 	"qqbotrouter/config"
 	"qqbotrouter/handler"
-	"qqbotrouter/init"
+	"qqbotrouter/initialize"
 )
 
 var logger *zap.Logger
@@ -43,7 +43,7 @@ func initLogger(logLevel string) {
 
 func main() {
 	// Check and create config files if they don't exist
-	if err := init.CheckConfig(); err != nil {
+	if err := initialize.CheckConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to check/create config files: %v\n", err)
 		os.Exit(1)
 	}

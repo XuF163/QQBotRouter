@@ -26,6 +26,48 @@ type ChallengeResponse struct {
 	Signature  string `json:"signature"`
 }
 
+// ACK response structure for event dispatch
+type ACKResponse struct {
+	Op   int    `json:"op"`
+	Data uint32 `json:"d"`
+}
+
+// OpCode constants
+const (
+	OpHeartbeat          = 11 // Heartbeat
+	OpHeartbeatACK       = 12 // Heartbeat ACK
+	OpEventDispatch      = 0  // Event Dispatch
+	OpHTTPCallbackACK    = 12 // HTTP Callback ACK
+	OpCallbackValidation = 13 // Callback Validation
+	OpLegacyChallenge    = 1  // Legacy Challenge
+)
+
+// GenDispatchACK generates ACK response for event dispatch
+// Always returns d=0 to indicate success, preventing platform from retrying
+// even when all forwards fail, to avoid repeated pushes that could crash the project
+func GenDispatchACK(success bool) []byte {
+	// Always return success (data = 0) to prevent platform retry
+	// This avoids repeated pushes when all forward destinations fail
+	ack := ACKResponse{
+		Op:   OpHTTPCallbackACK,
+		Data: 0, // Always success to prevent retry
+	}
+
+	response, _ := json.Marshal(ack)
+	return response
+}
+
+// GenHeartbeatACK generates ACK response for heartbeat
+func GenHeartbeatACK(seq uint32) []byte {
+	ack := ACKResponse{
+		Op:   OpHeartbeatACK,
+		Data: seq,
+	}
+
+	response, _ := json.Marshal(ack)
+	return response
+}
+
 // generateSeed generates a 32-byte seed from the secret according to QQ official documentation
 func generateSeed(secret string) []byte {
 	// 按照QQ官方文档的逻辑：重复secret直到长度达到32字节
