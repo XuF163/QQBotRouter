@@ -1,40 +1,33 @@
 # 工作流名称
-name: Go Cross-Platform Build
+name: Go Cross-Platform Build and Release
 
 # 触发工作流的事件
 on:
-  # 1. 当代码推送到 master 分支时
+  # 1. 当代码推送到 master 分支时 (仅构建和测试)
   push:
     branches: [ "master" ]
-  # 2. 当有 Pull Request 指向 master 分支时
+  # 2. 当有 Pull Request 指向 master 分支时 (仅构建和测试)
   pull_request:
     branches: [ "master" ]
-  # 3. 当创建新的 Release 时 (推荐用于发布二进制文件)
-  release:
-    types: [created]
+  # 3. 当创建新的标签 (格式为 v*.*.*) 时，触发发布
+  push:
+    tags:
+      - 'v*.*.*'
 
-# 环境变量，方便统一修改
+# 环境变量
 env:
-  # 你的主程序包路径，如果是根目录，则为 .
-  # 如果是 cmd/myapp，则填写 ./cmd/myapp
   GO_MAIN_PATH: '.'
-  # 产物的基础名称
   BINARY_NAME: '429RouterBeat'
 
-
 jobs:
+  # ==================================
+  # 构建 Job: 负责编译所有平台的文件
+  # ==================================
   build:
-    # Job 名称
     name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
-    # 运行此 Job 的虚拟机环境
     runs-on: ubuntu-latest
-    
-    # 构建矩阵，用于交叉编译
     strategy:
       matrix:
-        # 定义不同平台的组合
-        # goos: 目标操作系统
-        # goarch: 目标架构
         include:
           - goos: linux
             goarch: amd64
@@ -46,48 +39,68 @@ jobs:
             goarch: amd64
           - goos: darwin # macOS Apple Silicon
             goarch: arm64
-
-    # Job 中的步骤
     steps:
-      # 第一步：检出代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 第二步：设置 Go 环境
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # 指定 Go 版本，或使用 go.mod 文件中的版本
-          go-version: '1.22' 
-          # 可选：缓存依赖项以加快后续构建速度
+          go-version: '1.22'
           cache: true
 
-      # 第三步：编译二进制文件
-      - name: Build
-        # 使用 env 命令设置 GOOS 和 GOARCH 环境变量进行交叉编译
+      # 修正步骤 1: 准备文件名并存入环境变量
+      - name: Prepare file names
+        id: prep
         run: |
-          # 构造包含日期的基础文件名
-          BASE_NAME="${{ env.BINARY_NAME }}-$(date +'%Y-%m-%d')"
-
-          # 根据平台构建最终的输出文件名
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            BASE_NAME="${{ env.BINARY_NAME }}"
+          else
+            BASE_NAME="${{ env.BINARY_NAME }}-$(date +'%Y-%m-%d')"
+          fi
+          
           OUTPUT_NAME="${BASE_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ ${{ matrix.goos }} == 'windows' ]; then
             OUTPUT_NAME+='.exe'
           fi
           
-          # 执行编译命令
-          # -v: 打印编译的包名
-          # -ldflags="-s -w": 减小二进制文件大小 (可选)
-          # -o: 指定输出文件名
-          echo "Building binary as $OUTPUT_NAME"
-          env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -ldflags="-s -w" -o "$OUTPUT_NAME" ${{ env.GO_MAIN_PATH }}
+          # 将准备好的文件名写入 GitHub 环境变量，供后续步骤使用
+          echo "OUTPUT_NAME=${OUTPUT_NAME}" >> $GITHUB_ENV
 
-      # 第四步：上传编译产物
+      # 修正步骤 2: 使用准备好的环境变量进行编译
+      - name: Build
+        run: |
+          echo "Building binary as ${{ env.OUTPUT_NAME }}"
+          env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -ldflags="-s -w" -o "${{ env.OUTPUT_NAME }}" ${{ env.GO_MAIN_PATH }}
+
+      # 修正步骤 3: 使用准备好的环境变量上传产物
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 产物的名称，会显示在 GitHub Actions 页面
-          # 格式: 429RouterBeat-YYYY-MM-DD-linux-amd64
-          name: "${{ env.BINARY_NAME }}-$(date +'%Y-%m-%d')-${{ matrix.goos }}-${{ matrix.goarch }}"
-          # 要上传的文件路径，使用通配符 * 来匹配带 .exe 和不带 .exe 的文件
-          path: "${{ env.BINARY_NAME }}-$(date +'%Y-%m-%d')-${{ matrix.goos }}-${{ matrix.goarch }}*"
+          # 使用一个固定的名字 "binaries"，方便 release job 下载
+          name: binaries
+          # 使用准备好的 OUTPUT_NAME 作为路径
+          path: ${{ env.OUTPUT_NAME }}
+
+  # ==================================
+  # 发布 Job: 仅在打标签时运行
+  # ==================================
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: ./binaries
+
+      - name: Create Release and Upload Assets
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "./binaries/*"
+          generateReleaseNotes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
