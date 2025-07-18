@@ -89,7 +89,7 @@ func main() {
 		TLSConfig: certManager.TLSConfig(),
 	}
 
-	// 5. Start HTTP server for ACME challenges
+	// 5. Start HTTP server for ACME challenges....
 	go func() {
 		logger.Info("Starting HTTP server for ACME challenges...", zap.String("port", cfg.HTTPPort))
 		if err := http.ListenAndServe(":"+cfg.HTTPPort, certManager.HTTPHandler(nil)); err != nil {
