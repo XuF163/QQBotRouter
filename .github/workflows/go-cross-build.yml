@@ -3,16 +3,16 @@ name: Go Cross-Platform Build and Release
 
 # 触发工作流的事件
 on:
-  # 1. 当代码推送到 master 分支时 (仅构建和测试)
+  # push 事件：当推送到 master 分支或 v*.*.* 格式的标签时触发
   push:
-    branches: [ "master" ]
-  # 2. 当有 Pull Request 指向 master 分支时 (仅构建和测试)
-  pull_request:
-    branches: [ "master" ]
-  # 3. 当创建新的标签 (格式为 v*.*.*) 时，触发发布
-  push:
+    branches:
+      - 'master'
     tags:
       - 'v*.*.*'
+  # pull_request 事件：当有 PR 指向 master 分支时触发
+  pull_request:
+    branches:
+      - 'master'
 
 # 环境变量
 env:
@@ -49,7 +49,6 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      # 修正步骤 1: 准备文件名并存入环境变量
       - name: Prepare file names
         id: prep
         run: |
@@ -64,22 +63,17 @@ jobs:
             OUTPUT_NAME+='.exe'
           fi
           
-          # 将准备好的文件名写入 GitHub 环境变量，供后续步骤使用
           echo "OUTPUT_NAME=${OUTPUT_NAME}" >> $GITHUB_ENV
 
-      # 修正步骤 2: 使用准备好的环境变量进行编译
       - name: Build
         run: |
           echo "Building binary as ${{ env.OUTPUT_NAME }}"
           env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -ldflags="-s -w" -o "${{ env.OUTPUT_NAME }}" ${{ env.GO_MAIN_PATH }}
 
-      # 修正步骤 3: 使用准备好的环境变量上传产物
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 使用一个固定的名字 "binaries"，方便 release job 下载
           name: binaries
-          # 使用准备好的 OUTPUT_NAME 作为路径
           path: ${{ env.OUTPUT_NAME }}
 
   # ==================================
@@ -89,6 +83,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    # 关键：只有在创建 tag 时才运行此 job
     if: startsWith(github.ref, 'refs/tags/')
     
     steps:
