@@ -22,6 +22,17 @@ type WebhookHandler struct {
 	qosManager *qos.QoSManager
 }
 
+// writeJSONResponse writes a JSON response with the given status code and payload
+func (h *WebhookHandler) writeJSONResponse(rw http.ResponseWriter, statusCode int, payload []byte) {
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(statusCode)
+	if _, err := rw.Write(payload); err != nil {
+		h.logger.Error("Failed to write JSON response",
+			zap.Int("status_code", statusCode),
+			zap.Error(err))
+	}
+}
+
 // NewWebhookHandler creates a new WebhookHandler.
 func NewWebhookHandler(logger *zap.Logger, scheduler *scheduler.Scheduler, qosManager *qos.QoSManager) *WebhookHandler {
 	return &WebhookHandler{
@@ -98,11 +109,7 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 			// Return throttled response
 			ackResponse := GenDispatchACK(false) // Indicate processing failed
-			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(http.StatusTooManyRequests)
-			if _, err := rw.Write(ackResponse); err != nil {
-				h.logger.Error("Failed to write throttled ACK response", zap.Error(err))
-			}
+			h.writeJSONResponse(rw, http.StatusTooManyRequests, ackResponse)
 
 			// Update QoS metrics
 			h.qosManager.UpdateMetrics(time.Since(startTime), false)
@@ -111,11 +118,7 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 		// Immediately acknowledge the request
 		ackResponse := GenDispatchACK(true)
-		rw.Header().Set("Content-Type", "application/json")
-		rw.WriteHeader(http.StatusOK)
-		if _, err := rw.Write(ackResponse); err != nil {
-			h.logger.Error("Failed to write ACK response", zap.Error(err))
-		}
+		h.writeJSONResponse(rw, http.StatusOK, ackResponse)
 
 		// Submit the request to the scheduler for asynchronous processing
 		go func() {
@@ -139,11 +142,7 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 
 		heartbeatACK := GenHeartbeatACK(seq)
-		rw.Header().Set("Content-Type", "application/json")
-		rw.WriteHeader(http.StatusOK)
-		if _, err := rw.Write(heartbeatACK); err != nil {
-			h.logger.Error("Failed to write heartbeat ACK", zap.Error(err))
-		}
+		h.writeJSONResponse(rw, http.StatusOK, heartbeatACK)
 	default:
 		h.logger.Warn("Received unknown op code",
 			zap.Int("op_code", packet.Op),

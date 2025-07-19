@@ -5,7 +5,11 @@ import (
 	"time"
 
 	"github.com/montanaflynn/stats"
+	"qqbotrouter/interfaces"
 )
+
+// Ensure StatsAnalyzer implements StatProvider interface
+var _ interfaces.StatProvider = (*StatsAnalyzer)(nil)
 
 // StatsAnalyzer analyzes user message intervals to determine dynamic baselines.
 type StatsAnalyzer struct {
@@ -106,4 +110,47 @@ func (s *StatsAnalyzer) reset() {
 	defer s.mutex.Unlock()
 
 	s.messageIntervals = make([]float64, 0, 10000)
+}
+
+// GetUserRequestCount returns the number of requests for a user in a time window
+func (s *StatsAnalyzer) GetUserRequestCount(userID string, window time.Duration) int {
+	// Simplified implementation for interface compliance
+	return 0
+}
+
+// GetAverageResponseTime returns the average response time
+func (s *StatsAnalyzer) GetAverageResponseTime() time.Duration {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.p50 // Use P50 as average response time approximation
+}
+
+// GetErrorRate returns the current error rate
+func (s *StatsAnalyzer) GetErrorRate() float64 {
+	// Simplified implementation for interface compliance
+	return 0.0
+}
+
+// GetTotalRequests returns the total number of requests processed
+func (s *StatsAnalyzer) GetTotalRequests() int64 {
+	// Simplified implementation for interface compliance
+	return 0
+}
+
+// GetActiveConnections returns the number of active connections
+func (s *StatsAnalyzer) GetActiveConnections() int {
+	// Simplified implementation for interface compliance
+	return 0
+}
+
+// RecordRequest records a request with processing time and success status
+func (s *StatsAnalyzer) RecordRequest(userID string, processingTime time.Duration, success bool) {
+	// For now, just record the processing time as a message interval
+	s.RecordMessageInterval(processingTime)
+}
+
+// GetSystemLoad returns the current system load
+func (s *StatsAnalyzer) GetSystemLoad() float64 {
+	// Simplified implementation for interface compliance
+	return 0.0
 }

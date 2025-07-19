@@ -11,11 +11,19 @@ import (
 
 // Config represents the main configuration structure
 type Config struct {
-	LogLevel                    string                       `yaml:"log_level"`
-	HTTPSPort                   string                       `yaml:"https_port"`
-	HTTPPort                    string                       `yaml:"http_port"`
-	Bots                        map[string]BotConfig         `yaml:"bots"`
-	IntelligentSchedulingPolicy *IntelligentSchedulingPolicy `yaml:"intelligent_scheduling_policy"`
+	LogLevel  string               `yaml:"log_level"`
+	HTTPSPort string               `yaml:"https_port"`
+	HTTPPort  string               `yaml:"http_port"`
+	Bots      map[string]BotConfig `yaml:"bots"`
+
+	// QoS Configuration
+	QoS QoSConfig `yaml:"qos"`
+
+	// Scheduler Configuration
+	Scheduler SchedulerConfig `yaml:"scheduler"`
+
+	// Legacy: 智能调度策略配置 (deprecated, use QoS and Scheduler instead)
+	IntelligentSchedulingPolicy *IntelligentSchedulingPolicy `yaml:"intelligent_scheduling_policy,omitempty"`
 }
 
 // BotConfig represents individual bot configuration
@@ -441,142 +449,19 @@ bots:
           - "http://localhost:3003/webhook/test"
           - "http://localhost:3004/webhook/test"
 
-####################################################
-# 智能调度策略 - 全局QoS策略
-####################################################
-intelligent_scheduling_policy:
+# QoS配置
+qos:
   enabled: true
+  max_concurrent_requests: 100
+  request_timeout_seconds: 30
+  rate_limit_per_second: 10
 
-  # 动态负载监控与调节
-  dynamic_load_tuning:
-    enabled: true
-    latency_threshold_ms: 250
-
-  # 自适应入口节流阀
-  adaptive_throttling:
-    enabled: true
-    min_request_interval_ms: 100
-
-  # 自学习优先级调度器
-  cognitive_scheduling:
-    worker_pool_size: 16
-    model_retrain_interval_hours: 24
-    fast_user_sensitivity: 1.5
-    spam_user_sensitivity: 3.0
-
-  # 动态基线分析
-  dynamic_baseline_analysis:
-    enabled: true
-    initial_learning_duration_minutes: 60
-    pattern_recognition_sensitivity: 2.0
-    min_data_points_for_baseline: 100
-
-  # 行为模式学习 (LSTM自动编码器)
-  behavioral_pattern_learning:
-    enabled: false  # 默认关闭，需要模型文件
-    lstm_model_path: "./models/lstm_autoencoder.pt"
-    learning_rate: 0.001
-    epochs: 100
-    batch_size: 32
-    sequence_length: 60
-    n_features: 5
-    hidden_dim: 64
-    n_layers: 2
-    dropout_prob: 0.2
-
-  # 优先级队列配置
-  priority_queue:
-    high_priority_weight: 10
-    medium_priority_weight: 5
-    low_priority_weight: 1
-    max_queue_size: 10000
-
-  # 性能监控
-  performance_monitoring:
-    enabled: true
-    log_interval_seconds: 60
-    detailed_metrics: true
-
-  # 硬件自适应
-  hardware_adaptive:
-    enabled: true
-    cpu_usage_threshold: 0.8
-    memory_usage_threshold: 0.85
-
-  # 熔断器
-  circuit_breaker:
-    enabled: true
-    failure_rate_threshold: 0.5
-    recovery_time_seconds: 30
-    min_requests_for_evaluation: 10
-
-  # 流量镜像（可选）
-  traffic_mirroring:
-    enabled: false
-    mirror_target_url: "http://localhost:9999/mirror"
-    mirror_sampling_rate: 0.1
-
-  # 热重载
-  hot_reload:
-    enabled: true
-    config_watch_interval_seconds: 10
-
-  # 优雅关闭
-  graceful_shutdown:
-    enabled: true
-    shutdown_timeout_seconds: 30
-    state_persistence_path: "./state/scheduler_state.json"
-
-  # 调试和可视化
-  debugging_and_visualization:
-    enabled: true
-    pprof_port: 6060
-    metrics_exporter_type: "prometheus"
-    metrics_exporter_endpoint: "http://localhost:9090"
-
-  # 用户声誉系统
-  user_reputation_system:
-    enabled: true
-    reputation_decay_factor: 0.95
-    initial_reputation: 100
-    min_reputation_for_high_priority: 150
-    max_reputation_for_low_priority: 50
-
-  # 插件架构（可选）
-  plugin_architecture:
-    enabled: false
-    plugin_directory: "./plugins"
-
-  # A/B测试（可选）
-  ab_testing:
-    enabled: false
-    control_group_ratio: 0.5
-
-  # 告警和通知（可选）
-  alerting_and_notification:
-    enabled: false
-    alert_manager_url: "http://localhost:9093"
-    notification_channels:
-      - type: "webhook"
-        url: "http://localhost:8080/alerts"
-
-  # API版本控制
-  api_versioning:
-    default_version: "v1"
-    supported_versions: ["v1", "v2"]
-
-  # 安全与合规
-  security_and_compliance:
-    enable_ip_whitelist: false
-    ip_whitelist: []
-    enable_ip_blacklist: false
-    ip_blacklist: []
-    max_request_body_size_kb: 1024
-
-  # 实验性功能
-  experimental_features:
-    enable_feature_x: false
-    feature_y_parameter: "default_value"
+# 调度器配置
+scheduler:
+  enabled: true
+  worker_pool_size: 16
+  queue_size: 1000
+  load_balancing_strategy: "round_robin"
 `
 
 	return os.WriteFile(configPath, []byte(defaultConfigTemplate), 0644)

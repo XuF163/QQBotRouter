@@ -20,6 +20,14 @@ type ForwardResult struct {
 	Error       error
 }
 
+// sendResult safely sends a result to the channel or handles context cancellation
+func sendResult(ctx context.Context, resultChan chan<- ForwardResult, result ForwardResult) {
+	select {
+	case resultChan <- result:
+	case <-ctx.Done():
+	}
+}
+
 // ForwardRequestWithResult forwards the request and returns the result via channel
 func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destination string, body []byte, header http.Header, resultChan chan<- ForwardResult, loadCounter *load.Counter) {
 	loadCounter.Increment()
@@ -30,10 +38,7 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 			logger.Error("Panic in ForwardRequestWithResult",
 				zap.String("destination", destination),
 				zap.Any("panic", r))
-			select {
-			case resultChan <- ForwardResult{Destination: destination, Success: false, Error: nil}:
-			case <-ctx.Done():
-			}
+			sendResult(ctx, resultChan, ForwardResult{Destination: destination, Success: false, Error: nil})
 		}
 	}()
 
@@ -42,10 +47,7 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 		logger.Error("Failed to create forward request",
 			zap.String("destination", destination),
 			zap.Error(err))
-		select {
-		case resultChan <- ForwardResult{Destination: destination, Success: false, Error: err}:
-		case <-ctx.Done():
-		}
+		sendResult(ctx, resultChan, ForwardResult{Destination: destination, Success: false, Error: err})
 		return
 	}
 	req.Header = header.Clone()
@@ -56,10 +58,7 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 		logger.Debug("Failed to forward request",
 			zap.String("destination", destination),
 			zap.Error(err))
-		select {
-		case resultChan <- ForwardResult{Destination: destination, Success: false, Error: err}:
-		case <-ctx.Done():
-		}
+		sendResult(ctx, resultChan, ForwardResult{Destination: destination, Success: false, Error: err})
 		return
 	}
 	defer resp.Body.Close()
@@ -75,15 +74,12 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 			zap.Int("status_code", resp.StatusCode))
 	}
 
-	select {
-	case resultChan <- ForwardResult{
+	sendResult(ctx, resultChan, ForwardResult{
 		Destination: destination,
 		Success:     success,
 		StatusCode:  resp.StatusCode,
 		Error:       nil,
-	}:
-	case <-ctx.Done():
-	}
+	})
 }
 
 // ForwardToMultipleDestinations forwards to multiple destinations and waits for all results
