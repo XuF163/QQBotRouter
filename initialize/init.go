@@ -6,9 +6,13 @@ import (
 )
 
 const (
-	configYamlFile    = "config.yaml"
-	sslDir            = "ssl"
-	secretDir         = "secret-dir"
+	configYamlFile = "config.yaml"
+	sslDir         = "ssl"
+	secretDir      = "secret-dir"
+
+	// DEPRECATED: configYamlContent is deprecated.
+	// Use config.GenerateDefaultConfig() instead for centralized default configuration management.
+	// This constant is kept for backward compatibility but should not be used in new code.
 	configYamlContent = `# QQ Bot Router Configuration with Intelligent QoS
 # 智能QoS升级版配置文件
 

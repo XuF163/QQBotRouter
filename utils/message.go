@@ -51,17 +51,11 @@ func ExtractMessageInfo(body []byte) MessageInfo {
 	return MessageInfo{UserID: userID, Message: message}
 }
 
-// IsSpamPattern detects potential spam messages
-func IsSpamPattern(message string) bool {
-	// Simple spam detection patterns
-	spamPatterns := []string{
-		"重复", "刷屏", "广告", "推广",
-		"spam", "advertisement", "promotion",
-	}
-
+// IsSpamPattern detects potential spam messages using provided keywords
+func IsSpamPattern(message string, spamKeywords []string) bool {
 	messageLower := strings.ToLower(message)
-	for _, pattern := range spamPatterns {
-		if strings.Contains(messageLower, pattern) {
+	for _, pattern := range spamKeywords {
+		if strings.Contains(messageLower, strings.ToLower(pattern)) {
 			return true
 		}
 	}
@@ -82,16 +76,11 @@ func IsSpamPattern(message string) bool {
 	return false
 }
 
-// IsHighPriorityMessage detects high priority messages
-func IsHighPriorityMessage(message string) bool {
-	highPriorityPatterns := []string{
-		"紧急", "重要", "帮助", "问题", "错误",
-		"urgent", "important", "help", "error", "issue",
-	}
-
+// IsHighPriorityMessage detects high priority messages using provided keywords
+func IsHighPriorityMessage(message string, priorityKeywords []string) bool {
 	messageLower := strings.ToLower(message)
-	for _, pattern := range highPriorityPatterns {
-		if strings.Contains(messageLower, pattern) {
+	for _, pattern := range priorityKeywords {
+		if strings.Contains(messageLower, strings.ToLower(pattern)) {
 			return true
 		}
 	}
@@ -108,14 +97,14 @@ func IsFastUser(userID string) bool {
 	return hash[0]%4 == 0 // 25% of users are considered "fast"
 }
 
-// CalculateMessagePriority calculates message priority based on content and user
-func CalculateMessagePriority(userID, message string) int {
+// CalculateMessagePriority calculates message priority based on content and user with provided keywords
+func CalculateMessagePriority(userID, message string, spamKeywords, priorityKeywords []string) int {
 	basePriority := 5 // Default priority (1-10 scale)
 
 	// Factor 1: Message pattern analysis
-	if IsSpamPattern(message) {
+	if IsSpamPattern(message, spamKeywords) {
 		basePriority = 1 // Lowest priority for spam
-	} else if IsHighPriorityMessage(message) {
+	} else if IsHighPriorityMessage(message, priorityKeywords) {
 		basePriority = 10 // Highest priority for important messages
 	}
 

@@ -105,7 +105,14 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		msgInfo := utils.ExtractMessageInfo(body)
 
 		// Calculate priority based on message content and user behavior
-		priority := utils.CalculateMessagePriority(msgInfo.UserID, msgInfo.Message)
+		// Get global config to access scheduler configuration
+		globalConfig := config.GetGlobalConfig()
+		var spamKeywords, priorityKeywords []string
+		if globalConfig != nil && globalConfig.Scheduler.MessageClassification.Enabled {
+			spamKeywords = globalConfig.Scheduler.MessageClassification.SpamKeywords
+			priorityKeywords = globalConfig.Scheduler.MessageClassification.PriorityKeywords
+		}
+		priority := utils.CalculateMessagePriority(msgInfo.UserID, msgInfo.Message, spamKeywords, priorityKeywords)
 
 		// Check if request should be throttled
 		if h.qosManager.ShouldThrottle(msgInfo.UserID, priority) {

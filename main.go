@@ -72,7 +72,7 @@ func main() {
 	statsAnalyzer := stats.NewStatsAnalyzer(cfg.Scheduler.UserBehaviorAnalysis.MinDataPointsForBaseline)
 	qosObserver := observer.NewObserver(time.Duration(cfg.QoS.DynamicLoadBalancing.LoadThreshold)*time.Millisecond, 100)
 	mlTrainer := ml_trainer.NewMLTrainer(statsAnalyzer)
-	qosManager := qos.NewQoSManager(cfg, loadCounter, statsAnalyzer, logger)
+	qosManager := qos.NewQoSManager(cfg, loadCounter, statsAnalyzer, qosObserver, logger)
 	mainScheduler := scheduler.NewScheduler(statsAnalyzer, &cfg.Scheduler, &cfg.QoS, loadCounter)
 
 	// 3. Start all background services

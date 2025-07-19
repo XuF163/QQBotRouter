@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	"qqbotrouter/config"
 	"qqbotrouter/load"
+	"qqbotrouter/observer"
 	"qqbotrouter/stats"
 )
 
@@ -16,6 +17,7 @@ type QoSManager struct {
 	config        *config.Config
 	loadCounter   *load.Counter
 	statsAnalyzer *stats.StatsAnalyzer
+	observer      *observer.Observer
 	logger        *zap.Logger
 	mu            sync.RWMutex
 
@@ -35,11 +37,12 @@ type QoSManager struct {
 }
 
 // NewQoSManager creates a new QoS manager
-func NewQoSManager(cfg *config.Config, loadCounter *load.Counter, statsAnalyzer *stats.StatsAnalyzer, logger *zap.Logger) *QoSManager {
+func NewQoSManager(cfg *config.Config, loadCounter *load.Counter, statsAnalyzer *stats.StatsAnalyzer, obs *observer.Observer, logger *zap.Logger) *QoSManager {
 	return &QoSManager{
 		config:         cfg,
 		loadCounter:    loadCounter,
 		statsAnalyzer:  statsAnalyzer,
+		observer:       obs,
 		logger:         logger,
 		throttleLevel:  0.0,
 		lastAdjustment: time.Now(),
@@ -166,16 +169,28 @@ func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
 	// Get baseline from stats analyzer
 	p90Baseline := qm.statsAnalyzer.P90()
 
-	// Adjust throttle level based on load and response time
+	// Get P95 high load threshold from observer
+	p95HighLoadThreshold := qm.observer.HighLoadThreshold()
+
+	// Adjust throttle level based on load, response time, and P95 threshold
 	throttleAdjustment := qm.config.QoS.SystemLimits.ThrottleAdjustment
-	if loadRatio > qm.config.QoS.SystemLimits.HighLoadThreshold || (p90Baseline > 0 && responseTime > p90Baseline*2) {
-		// Increase throttling
+
+	// Significantly increase throttling if response time exceeds P95 threshold
+	if p95HighLoadThreshold > 0 && responseTime > p95HighLoadThreshold {
+		// Aggressive throttling when exceeding P95 threshold
+		qm.throttleLevel = min(1.0, qm.throttleLevel+throttleAdjustment*2)
+		qm.logger.Warn("Aggressive throttling due to P95 threshold exceeded",
+			zap.Float64("throttle_level", qm.throttleLevel),
+			zap.Duration("response_time", responseTime),
+			zap.Duration("p95_threshold", p95HighLoadThreshold))
+	} else if loadRatio > qm.config.QoS.SystemLimits.HighLoadThreshold || (p90Baseline > 0 && responseTime > p90Baseline*2) {
+		// Standard throttling increase
 		qm.throttleLevel = min(1.0, qm.throttleLevel+throttleAdjustment)
 		qm.logger.Info("Increased throttle level",
 			zap.Float64("throttle_level", qm.throttleLevel),
 			zap.Float64("load_ratio", loadRatio))
-	} else if loadRatio < qm.config.QoS.SystemLimits.LowLoadThreshold && (p90Baseline == 0 || responseTime < p90Baseline) {
-		// Decrease throttling
+	} else if loadRatio < qm.config.QoS.SystemLimits.LowLoadThreshold && (p90Baseline == 0 || responseTime < p90Baseline) && (p95HighLoadThreshold == 0 || responseTime < time.Duration(float64(p95HighLoadThreshold)*0.8)) {
+		// Decrease throttling only when well below all thresholds
 		qm.throttleLevel = max(0.0, qm.throttleLevel-throttleAdjustment/2)
 		qm.logger.Info("Decreased throttle level",
 			zap.Float64("throttle_level", qm.throttleLevel),

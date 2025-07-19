@@ -195,54 +195,51 @@ func GetBotConfigFromRequest(host, path string) (BotConfig, bool) {
 	return BotConfig{}, false
 }
 
-// GenerateDefaultConfig generates a default configuration template
+// GenerateDefaultConfig generates a default configuration using centralized defaults
 func GenerateDefaultConfig(configPath string) error {
-	defaultConfigTemplate := `# QQ Bot Router Configuration
-# 智能QoS路由器配置文件模板
+	// Create default configuration using centralized default functions
+	defaultConfig := Config{
+		LogLevel:  "development",
+		HTTPSPort: "8443",
+		HTTPPort:  "8444",
+		QoS:       GetDefaultQoSConfig(),
+		Scheduler: GetDefaultSchedulerConfig(),
+		Bots: map[string]BotConfig{
+			"your-domain.com/webhook": {
+				Secret: "your-bot-secret-here",
+				ForwardTo: []string{
+					"http://localhost:3000/webhook",
+					"http://localhost:3001/webhook",
+				},
+				RegexRoutes: map[string]RegexRouteConfig{
+					"^#help": {
+						URLs: []string{"http://localhost:3002/webhook/help"},
+					},
+					"^#test": {
+						Endpoints: []string{
+							"http://localhost:3003/webhook/test",
+							"http://localhost:3004/webhook/test",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Marshal to YAML
+	data, err := yaml.Marshal(&defaultConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal default config: %w", err)
+	}
+
+	// Add header comment
+	header := `# QQ Bot Router Configuration
+# 智能QoS路由器配置文件
+# 此配置使用集中化的默认值管理
 # 请根据实际需求修改以下配置
 
-# 日志级别: production, development
-log_level: development
-
-# 服务端口配置
-https_port: "8443"
-http_port: "8444"
-
-# 机器人配置 - 使用完整 webhook URL 作为键
-# 系统会自动从配置中提取域名用于 SSL 证书管理
-bots:
-  # 示例配置 - 请替换为您的实际配置
-  "your-domain.com:8443/webhook":
-    secret: "your-bot-secret-here"
-    # 默认转发目标
-    forward_to:
-      - "http://localhost:3000/webhook"
-      - "http://localhost:3001/webhook"
-    # 正则匹配路由（可选）
-    regex_routes:
-      "^#help":
-        urls:
-          - "http://localhost:3002/webhook/help"
-      "^#test":
-        ishash: true
-        endpoints:
-          - "http://localhost:3003/webhook/test"
-          - "http://localhost:3004/webhook/test"
-
-# QoS配置
-qos:
-  enabled: true
-  max_concurrent_requests: 100
-  request_timeout_seconds: 30
-  rate_limit_per_second: 10
-
-# 调度器配置
-scheduler:
-  enabled: true
-  worker_pool_size: 16
-  queue_size: 1000
-  load_balancing_strategy: "round_robin"
 `
+	finalContent := header + string(data)
 
-	return os.WriteFile(configPath, []byte(defaultConfigTemplate), 0644)
+	return os.WriteFile(configPath, []byte(finalContent), 0644)
 }

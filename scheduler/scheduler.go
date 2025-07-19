@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -70,6 +71,8 @@ type Scheduler struct {
 	qosConfig       *config.QoSConfig
 	loadCounter     *load.Counter
 	workerPool      chan *Request
+	userLastRequest map[string]time.Time // Track last request time per user
+	mu              sync.RWMutex         // Protect userLastRequest map
 }
 
 // NewScheduler creates a new Scheduler.
@@ -81,6 +84,7 @@ func NewScheduler(statsAnalyzer *stats.StatsAnalyzer, schedulerConfig *config.Sc
 		qosConfig:       qosConfig,
 		loadCounter:     loadCounter,
 		workerPool:      make(chan *Request, schedulerConfig.WorkerPoolSize),
+		userLastRequest: make(map[string]time.Time),
 	}
 	heap.Init(&s.pq)
 	return s
@@ -146,14 +150,35 @@ func (s *Scheduler) calculatePriority(userID, message string) int {
 		basePriority += s.schedulerConfig.PrioritySettings.LowLoadAdjustment
 	}
 
-	// Factor 2: Message pattern analysis
-	if utils.IsSpamPattern(message) {
-		basePriority = s.schedulerConfig.PrioritySettings.MinPriority // Lowest priority for spam
-	} else if utils.IsHighPriorityMessage(message) {
-		basePriority = s.schedulerConfig.PrioritySettings.MaxPriority // Highest priority for important messages
+	// Factor 2: Anti-spam detection using P50 baseline
+	now := time.Now()
+	s.mu.Lock()
+	lastRequestTime, exists := s.userLastRequest[userID]
+	s.userLastRequest[userID] = now
+	s.mu.Unlock()
+
+	if exists {
+		requestInterval := now.Sub(lastRequestTime)
+		p50Baseline := s.statsAnalyzer.P50()
+
+		// If user's request interval is much shorter than P50 baseline, consider it spam
+		if p50Baseline > 0 && requestInterval < p50Baseline/3 {
+			basePriority -= s.schedulerConfig.PrioritySettings.HighLoadAdjustment * 2 // Significant penalty for potential spam
+		} else if p50Baseline > 0 && requestInterval < p50Baseline/2 {
+			basePriority -= s.schedulerConfig.PrioritySettings.HighLoadAdjustment // Moderate penalty for fast requests
+		}
 	}
 
-	// Factor 3: User behavior analysis (simplified)
+	// Factor 3: Message pattern analysis
+	if s.schedulerConfig.MessageClassification.Enabled {
+		if s.schedulerConfig.MessageClassification.SpamDetection && utils.IsSpamPattern(message, s.schedulerConfig.MessageClassification.SpamKeywords) {
+			basePriority = s.schedulerConfig.PrioritySettings.MinPriority // Lowest priority for spam
+		} else if utils.IsHighPriorityMessage(message, s.schedulerConfig.MessageClassification.PriorityKeywords) {
+			basePriority = s.schedulerConfig.PrioritySettings.MaxPriority // Highest priority for important messages
+		}
+	}
+
+	// Factor 4: User behavior analysis (simplified)
 	if utils.IsFastUser(userID) {
 		basePriority += s.schedulerConfig.PrioritySettings.FastUserBonus // Higher priority for active users
 	}
