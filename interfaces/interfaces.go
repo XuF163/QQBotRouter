@@ -28,6 +28,12 @@ type StatProvider interface {
 
 	// GetSystemLoad returns the current system load (0.0 to 1.0)
 	GetSystemLoad() float64
+
+	// P50 returns the 50th percentile of message intervals
+	P50() time.Duration
+
+	// P90 returns the 90th percentile of message intervals
+	P90() time.Duration
 }
 
 // QoSProvider defines the interface for QoS management
@@ -58,6 +64,27 @@ type SchedulerProvider interface {
 
 	// GetProcessingRate returns the current processing rate (requests per second)
 	GetProcessingRate() float64
+}
+
+// LoadProvider defines the interface for load monitoring
+type LoadProvider interface {
+	// Get returns the current load count
+	Get() int64
+
+	// Increment increments the load counter
+	Increment()
+
+	// Decrement decrements the load counter
+	Decrement()
+}
+
+// Observer defines the interface for observing system metrics
+type Observer interface {
+	// RecordLatency records a new request latency
+	RecordLatency(latency time.Duration)
+
+	// HighLoadThreshold returns the current high-load threshold
+	HighLoadThreshold() time.Duration
 }
 
 // ConfigProvider defines the interface for configuration management

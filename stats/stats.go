@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -63,6 +64,22 @@ func (s *StatsAnalyzer) ModeSwitched() {
 func (s *StatsAnalyzer) Run(ticker *time.Ticker) {
 	for {
 		select {
+		case <-ticker.C:
+			s.updateBaselines()
+		case <-s.modeSwitched:
+			s.reset()
+			s.updateBaselines()
+		}
+	}
+}
+
+// RunWithContext starts the stats analyzer's processing loop with context support for graceful shutdown.
+func (s *StatsAnalyzer) RunWithContext(ctx context.Context, ticker *time.Ticker) {
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
 		case <-ticker.C:
 			s.updateBaselines()
 		case <-s.modeSwitched:

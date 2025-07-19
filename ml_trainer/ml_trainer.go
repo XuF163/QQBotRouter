@@ -1,6 +1,7 @@
 package ml_trainer
 
 import (
+	"context"
 	"time"
 
 	"qqbotrouter/stats"
@@ -28,5 +29,23 @@ func (m *MLTrainer) Run(ticker *time.Ticker) {
 		// 4. Calculate the reconstruction error
 		// 5. If the error is high, signal a mode switch
 		// m.statsAnalyzer.ModeSwitched()
+	}
+}
+
+// RunWithContext starts the ML trainer's processing loop with context support for graceful shutdown.
+func (m *MLTrainer) RunWithContext(ctx context.Context, ticker *time.Ticker) {
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// 1. Collect time series data (e.g., message count, active users)
+			// 2. Preprocess the data
+			// 3. Feed the data into the LSTM autoencoder
+			// 4. Calculate the reconstruction error
+			// 5. If the error is high, signal a mode switch
+			// m.statsAnalyzer.ModeSwitched()
+		}
 	}
 }

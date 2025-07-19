@@ -4,6 +4,12 @@ import "time"
 
 // QoSConfig contains QoS-specific configuration
 type QoSConfig struct {
+	// Basic QoS Settings
+	MaxConcurrentRequests int     `yaml:"max_concurrent_requests"`
+	ThrottleThreshold     float64 `yaml:"throttle_threshold"`
+	RecoveryTimeout       int     `yaml:"recovery_timeout"`
+	FailureThreshold      int     `yaml:"failure_threshold"`
+
 	// System Limits
 	SystemLimits struct {
 		MaxLoad            int     `yaml:"max_load"`
@@ -62,6 +68,10 @@ type QoSConfig struct {
 // GetDefaultQoSConfig returns default QoS configuration
 func GetDefaultQoSConfig() QoSConfig {
 	return QoSConfig{
+		MaxConcurrentRequests: 100,
+		ThrottleThreshold:     0.7,
+		RecoveryTimeout:       30,
+		FailureThreshold:      5,
 		SystemLimits: struct {
 			MaxLoad            int     `yaml:"max_load"`
 			HighLoadThreshold  float64 `yaml:"high_load_threshold"`

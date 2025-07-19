@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"qqbotrouter/load"
+	"qqbotrouter/interfaces"
 )
 
 // ForwardResult represents the result of a forward operation
@@ -29,9 +29,9 @@ func sendResult(ctx context.Context, resultChan chan<- ForwardResult, result For
 }
 
 // ForwardRequestWithResult forwards the request and returns the result via channel
-func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destination string, body []byte, header http.Header, resultChan chan<- ForwardResult, loadCounter *load.Counter, forwardTimeout time.Duration) {
-	loadCounter.Increment()
-	defer loadCounter.Decrement()
+func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destination string, body []byte, header http.Header, resultChan chan<- ForwardResult, loadProvider interfaces.LoadProvider, forwardTimeout time.Duration) {
+	loadProvider.Increment()
+	defer loadProvider.Decrement()
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -83,7 +83,7 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 }
 
 // ForwardToMultipleDestinations forwards to multiple destinations and waits for all results
-func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, destinations []string, body []byte, header http.Header, timeout time.Duration, loadCounter *load.Counter, forwardTimeout time.Duration) []ForwardResult {
+func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, destinations []string, body []byte, header http.Header, timeout time.Duration, loadProvider interfaces.LoadProvider, forwardTimeout time.Duration) []ForwardResult {
 	if len(destinations) == 0 {
 		return []ForwardResult{}
 	}
@@ -100,7 +100,7 @@ func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, dest
 		wg.Add(1)
 		go func(destination string) {
 			defer wg.Done()
-			ForwardRequestWithResult(ctxWithTimeout, logger, destination, body, header, resultChan, loadCounter, forwardTimeout)
+			ForwardRequestWithResult(ctxWithTimeout, logger, destination, body, header, resultChan, loadProvider, forwardTimeout)
 		}(dest)
 	}
 

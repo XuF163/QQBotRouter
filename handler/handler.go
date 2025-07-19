@@ -17,6 +17,7 @@ import (
 
 // WebhookHandler is the main handler for all incoming webhook requests.
 type WebhookHandler struct {
+	config     *config.Config
 	logger     *zap.Logger
 	scheduler  *scheduler.Scheduler
 	qosManager *qos.QoSManager
@@ -43,12 +44,32 @@ func (h *WebhookHandler) writeErrorResponse(rw http.ResponseWriter, statusCode i
 }
 
 // NewWebhookHandler creates a new WebhookHandler.
-func NewWebhookHandler(logger *zap.Logger, scheduler *scheduler.Scheduler, qosManager *qos.QoSManager) *WebhookHandler {
+func NewWebhookHandler(cfg *config.Config, logger *zap.Logger, scheduler *scheduler.Scheduler, qosManager *qos.QoSManager) *WebhookHandler {
 	return &WebhookHandler{
+		config:     cfg,
 		logger:     logger,
 		scheduler:  scheduler,
 		qosManager: qosManager,
 	}
+}
+
+// getBotConfigFromRequest returns the bot configuration for a given host and path
+func (h *WebhookHandler) getBotConfigFromRequest(host, path string) (config.BotConfig, bool) {
+	// Construct the webhook URL from host and path
+	webhookURL := host + path
+
+	// Try exact match first
+	if botConfig, exists := h.config.Bots[webhookURL]; exists {
+		return botConfig, true
+	}
+
+	// Try with https:// prefix
+	httpsURL := "https://" + webhookURL
+	if botConfig, exists := h.config.Bots[httpsURL]; exists {
+		return botConfig, true
+	}
+
+	return config.BotConfig{}, false
 }
 
 // ServeHTTP implements the http.Handler interface.
@@ -63,7 +84,7 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	// 2. Get bot configuration for the requested host and path
-	bot, ok := config.GetBotConfigFromRequest(r.Host, r.URL.Path)
+	bot, ok := h.getBotConfigFromRequest(r.Host, r.URL.Path)
 	if !ok {
 		h.writeErrorResponse(rw, http.StatusUnauthorized, "Unauthorized",
 			zap.String("host", r.Host),
@@ -105,12 +126,10 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		msgInfo := utils.ExtractMessageInfo(body)
 
 		// Calculate priority based on message content and user behavior
-		// Get global config to access scheduler configuration
-		globalConfig := config.GetGlobalConfig()
 		var spamKeywords, priorityKeywords []string
-		if globalConfig != nil && globalConfig.Scheduler.MessageClassification.Enabled {
-			spamKeywords = globalConfig.Scheduler.MessageClassification.SpamKeywords
-			priorityKeywords = globalConfig.Scheduler.MessageClassification.PriorityKeywords
+		if h.config.Scheduler.MessageClassification.Enabled {
+			spamKeywords = h.config.Scheduler.MessageClassification.SpamKeywords
+			priorityKeywords = h.config.Scheduler.MessageClassification.PriorityKeywords
 		}
 		priority := utils.CalculateMessagePriority(msgInfo.UserID, msgInfo.Message, spamKeywords, priorityKeywords)
 

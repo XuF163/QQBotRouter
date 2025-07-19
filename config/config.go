@@ -159,42 +159,6 @@ func (c *Config) SetDefaults() {
 	}
 }
 
-// Global configuration instance
-var globalConfig *Config
-
-// SetGlobalConfig sets the global configuration instance
-func SetGlobalConfig(cfg *Config) {
-	globalConfig = cfg
-}
-
-// GetGlobalConfig returns the global configuration instance
-func GetGlobalConfig() *Config {
-	return globalConfig
-}
-
-// GetBotConfigFromRequest returns the bot configuration for a given host and path
-func GetBotConfigFromRequest(host, path string) (BotConfig, bool) {
-	if globalConfig == nil {
-		return BotConfig{}, false
-	}
-
-	// Construct the webhook URL from host and path
-	webhookURL := host + path
-
-	// Try exact match first
-	if botConfig, exists := globalConfig.Bots[webhookURL]; exists {
-		return botConfig, true
-	}
-
-	// Try with https:// prefix
-	httpsURL := "https://" + webhookURL
-	if botConfig, exists := globalConfig.Bots[httpsURL]; exists {
-		return botConfig, true
-	}
-
-	return BotConfig{}, false
-}
-
 // GenerateDefaultConfig generates a default configuration using centralized defaults
 func GenerateDefaultConfig(configPath string) error {
 	// Create default configuration using centralized default functions

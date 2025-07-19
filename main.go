@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -61,7 +63,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to load initial config: %v\n", err)
 		os.Exit(1)
 	}
-	config.SetGlobalConfig(cfg)
 	cfg.SetDefaults()
 
 	// Initialize logger based on config
@@ -72,16 +73,23 @@ func main() {
 	statsAnalyzer := stats.NewStatsAnalyzer(cfg.Scheduler.UserBehaviorAnalysis.MinDataPointsForBaseline)
 	qosObserver := observer.NewObserver(time.Duration(cfg.QoS.DynamicLoadBalancing.LoadThreshold)*time.Millisecond, 100)
 	mlTrainer := ml_trainer.NewMLTrainer(statsAnalyzer)
-	qosManager := qos.NewQoSManager(cfg, loadCounter, statsAnalyzer, qosObserver, logger)
+	qosManager := qos.NewQoSManager(&cfg.QoS, loadCounter, statsAnalyzer, qosObserver, logger)
 	mainScheduler := scheduler.NewScheduler(statsAnalyzer, &cfg.Scheduler, &cfg.QoS, loadCounter)
 
-	// 3. Start all background services
-	ctx := context.Background()
-	go statsAnalyzer.Run(time.NewTicker(1 * time.Minute))
-	go qosObserver.Run(time.NewTicker(1 * time.Minute))
-	go mlTrainer.Run(time.NewTicker(5 * time.Minute))
+	// 3. Set up graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Listen for interrupt signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Start all background services with context
+	go statsAnalyzer.RunWithContext(ctx, time.NewTicker(30*time.Second))
+	go qosObserver.RunWithContext(ctx, time.NewTicker(10*time.Second))
+	go mlTrainer.RunWithContext(ctx, time.NewTicker(5*time.Minute))
 	go qosManager.Start(ctx)
-	go mainScheduler.Run()
+	go mainScheduler.RunWithContext(ctx)
 
 	logger.Info("All QoS services have been initialized and started.")
 
@@ -101,7 +109,7 @@ func main() {
 
 	// 6. Set up HTTP/S servers
 	mux := http.NewServeMux()
-	mux.Handle("/", handler.NewWebhookHandler(logger, mainScheduler, qosManager))
+	mux.Handle("/", handler.NewWebhookHandler(cfg, logger, mainScheduler, qosManager))
 
 	server := &http.Server{
 		Addr:      ":" + cfg.HTTPSPort,
@@ -117,9 +125,30 @@ func main() {
 		}
 	}()
 
-	// 8. Start HTTPS server
-	logger.Info("Starting HTTPS server...", zap.String("port", cfg.HTTPSPort))
-	if err := server.ListenAndServeTLS("", ""); err != nil {
-		logger.Fatal("HTTPS server failed", zap.Error(err))
+	// 8. Start HTTPS server in a goroutine
+	go func() {
+		logger.Info("Starting HTTPS server...", zap.String("port", cfg.HTTPSPort))
+		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("HTTPS server failed", zap.Error(err))
+		}
+	}()
+
+	// 9. Wait for shutdown signal
+	<-sigChan
+	logger.Info("Shutdown signal received, starting graceful shutdown...")
+
+	// Cancel context to stop all background services
+	cancel()
+
+	// Shutdown HTTP server with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Server shutdown failed", zap.Error(err))
+	} else {
+		logger.Info("Server shutdown completed successfully")
 	}
+
+	logger.Info("Application shutdown completed")
 }

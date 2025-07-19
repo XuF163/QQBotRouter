@@ -1,11 +1,16 @@
 package observer
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/montanaflynn/stats"
+	"qqbotrouter/interfaces"
 )
+
+// Ensure Observer implements Observer interface
+var _ interfaces.Observer = (*Observer)(nil)
 
 // Observer monitors request latency and adjusts the high-load threshold.
 type Observer struct {
@@ -45,6 +50,19 @@ func (o *Observer) HighLoadThreshold() time.Duration {
 func (o *Observer) Run(ticker *time.Ticker) {
 	for range ticker.C {
 		o.updateHighLoadThreshold()
+	}
+}
+
+// RunWithContext starts the observer's monitoring loop with context support for graceful shutdown.
+func (o *Observer) RunWithContext(ctx context.Context, ticker *time.Ticker) {
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			o.updateHighLoadThreshold()
+		}
 	}
 }
 

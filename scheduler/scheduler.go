@@ -12,8 +12,7 @@ import (
 
 	"qqbotrouter/config"
 	"qqbotrouter/forwarder"
-	"qqbotrouter/load"
-	"qqbotrouter/stats"
+	"qqbotrouter/interfaces"
 	"qqbotrouter/utils"
 )
 
@@ -66,23 +65,23 @@ func (pq *PriorityQueue) Pop() interface{} {
 // Scheduler handles asynchronous request processing and priority scheduling.
 type Scheduler struct {
 	pq              PriorityQueue
-	statsAnalyzer   *stats.StatsAnalyzer
+	statsProvider   interfaces.StatProvider
 	schedulerConfig *config.SchedulerConfig
 	qosConfig       *config.QoSConfig
-	loadCounter     *load.Counter
+	loadProvider    interfaces.LoadProvider
 	workerPool      chan *Request
 	userLastRequest map[string]time.Time // Track last request time per user
 	mu              sync.RWMutex         // Protect userLastRequest map
 }
 
 // NewScheduler creates a new Scheduler.
-func NewScheduler(statsAnalyzer *stats.StatsAnalyzer, schedulerConfig *config.SchedulerConfig, qosConfig *config.QoSConfig, loadCounter *load.Counter) *Scheduler {
+func NewScheduler(statsProvider interfaces.StatProvider, schedulerConfig *config.SchedulerConfig, qosConfig *config.QoSConfig, loadProvider interfaces.LoadProvider) *Scheduler {
 	s := &Scheduler{
 		pq:              make(PriorityQueue, 0),
-		statsAnalyzer:   statsAnalyzer,
+		statsProvider:   statsProvider,
 		schedulerConfig: schedulerConfig,
 		qosConfig:       qosConfig,
-		loadCounter:     loadCounter,
+		loadProvider:    loadProvider,
 		workerPool:      make(chan *Request, schedulerConfig.WorkerPoolSize),
 		userLastRequest: make(map[string]time.Time),
 	}
@@ -131,6 +130,41 @@ func (s *Scheduler) Run() {
 	}
 }
 
+// RunWithContext starts the scheduler's processing loop with context support for graceful shutdown.
+func (s *Scheduler) RunWithContext(ctx context.Context) {
+	// Start worker goroutines
+	for i := 0; i < s.schedulerConfig.WorkerPoolSize; i++ {
+		go s.workerWithContext(ctx)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			close(s.workerPool)
+			return
+		default:
+			if len(s.pq) > 0 {
+				request := heap.Pop(&s.pq).(*Request)
+				select {
+				case s.workerPool <- request:
+				case <-ctx.Done():
+					close(s.workerPool)
+					return
+				}
+			} else {
+				// Prevent busy-waiting when the queue is empty
+				idleInterval := s.qosConfig.ParseDuration(s.qosConfig.RequestTimeouts.IdleCheckInterval)
+				select {
+				case <-time.After(idleInterval):
+				case <-ctx.Done():
+					close(s.workerPool)
+					return
+				}
+			}
+		}
+	}
+}
+
 // parseMessage extracts user ID and message content from request body
 func (s *Scheduler) parseMessage(body []byte) (userID, message string) {
 	return utils.ParseMessage(body)
@@ -142,7 +176,7 @@ func (s *Scheduler) calculatePriority(userID, message string) int {
 	basePriority := s.schedulerConfig.PrioritySettings.BasePriority
 
 	// Factor 1: System load adjustment
-	currentLoad := s.loadCounter.Get()
+	currentLoad := s.loadProvider.Get()
 	maxLoad := int64(s.qosConfig.SystemLimits.MaxLoad)
 	if currentLoad > maxLoad {
 		basePriority += s.schedulerConfig.PrioritySettings.HighLoadAdjustment
@@ -159,7 +193,7 @@ func (s *Scheduler) calculatePriority(userID, message string) int {
 
 	if exists {
 		requestInterval := now.Sub(lastRequestTime)
-		p50Baseline := s.statsAnalyzer.P50()
+		p50Baseline := s.statsProvider.P50()
 
 		// If user's request interval is much shorter than P50 baseline, consider it spam
 		if p50Baseline > 0 && requestInterval < p50Baseline/3 {
@@ -209,7 +243,7 @@ func (s *Scheduler) worker() {
 			request.Body,
 			request.Header,
 			processingTimeout,
-			s.loadCounter,
+			s.loadProvider,
 			forwardTimeout,
 		)
 
@@ -233,6 +267,58 @@ func (s *Scheduler) worker() {
 				zap.String("user_id", request.userID),
 				zap.Int("priority", request.priority),
 				zap.Int("failed_destinations", len(results)))
+		}
+	}
+}
+
+// workerWithContext processes requests from the worker pool with context support for graceful shutdown.
+func (s *Scheduler) workerWithContext(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case request, ok := <-s.workerPool:
+			if !ok {
+				return // Channel closed
+			}
+			// Implement intelligent routing logic
+			destinations := s.selectDestinations(request)
+
+			// Forward request and get results
+			processingTimeout := s.qosConfig.ParseDuration(s.qosConfig.RequestTimeouts.ProcessingTimeout)
+			forwardTimeout := s.qosConfig.ParseDuration(s.qosConfig.RequestTimeouts.ForwardTimeout)
+			results := forwarder.ForwardToMultipleDestinations(
+				request.Context,
+				request.Logger,
+				destinations,
+				request.Body,
+				request.Header,
+				processingTimeout,
+				s.loadProvider,
+				forwardTimeout,
+			)
+
+			// Check if any destination succeeded
+			success := false
+			for _, result := range results {
+				if result.Success {
+					success = true
+					break
+				}
+			}
+
+			// Log processing result
+			if success {
+				request.Logger.Debug("Request processed successfully",
+					zap.String("user_id", request.userID),
+					zap.Int("priority", request.priority),
+					zap.Int("successful_destinations", len(results)))
+			} else {
+				request.Logger.Warn("Request processing failed",
+					zap.String("user_id", request.userID),
+					zap.Int("priority", request.priority),
+					zap.Int("failed_destinations", len(results)))
+			}
 		}
 	}
 }

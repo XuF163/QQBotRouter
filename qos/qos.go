@@ -7,17 +7,15 @@ import (
 
 	"go.uber.org/zap"
 	"qqbotrouter/config"
-	"qqbotrouter/load"
-	"qqbotrouter/observer"
-	"qqbotrouter/stats"
+	"qqbotrouter/interfaces"
 )
 
 // QoSManager manages Quality of Service policies
 type QoSManager struct {
-	config        *config.Config
-	loadCounter   *load.Counter
-	statsAnalyzer *stats.StatsAnalyzer
-	observer      *observer.Observer
+	qosConfig     *config.QoSConfig
+	loadProvider  interfaces.LoadProvider
+	statsProvider interfaces.StatProvider
+	observer      interfaces.Observer
 	logger        *zap.Logger
 	mu            sync.RWMutex
 
@@ -37,12 +35,12 @@ type QoSManager struct {
 }
 
 // NewQoSManager creates a new QoS manager
-func NewQoSManager(cfg *config.Config, loadCounter *load.Counter, statsAnalyzer *stats.StatsAnalyzer, obs *observer.Observer, logger *zap.Logger) *QoSManager {
+func NewQoSManager(qosConfig *config.QoSConfig, loadProvider interfaces.LoadProvider, statsProvider interfaces.StatProvider, observer interfaces.Observer, logger *zap.Logger) *QoSManager {
 	return &QoSManager{
-		config:         cfg,
-		loadCounter:    loadCounter,
-		statsAnalyzer:  statsAnalyzer,
-		observer:       obs,
+		qosConfig:      qosConfig,
+		loadProvider:   loadProvider,
+		statsProvider:  statsProvider,
+		observer:       observer,
 		logger:         logger,
 		throttleLevel:  0.0,
 		lastAdjustment: time.Now(),
@@ -69,13 +67,13 @@ func (qm *QoSManager) ShouldThrottle(userID string, priority int) bool {
 
 // isCircuitOpen checks if circuit breaker is open
 func (qm *QoSManager) isCircuitOpen() bool {
-	if !qm.config.QoS.CircuitBreaker.Enabled {
+	if !qm.qosConfig.CircuitBreaker.Enabled {
 		return false
 	}
 
 	if qm.circuitOpen {
 		// Check if we should try to close the circuit
-		recoveryTimeout := qm.config.QoS.ParseDuration(qm.config.QoS.CircuitBreaker.RecoveryTimeout)
+		recoveryTimeout := qm.qosConfig.ParseDuration(qm.qosConfig.CircuitBreaker.RecoveryTimeout)
 		if time.Since(qm.circuitOpenTime) > recoveryTimeout {
 			qm.circuitOpen = false
 			qm.failureCount = 0
@@ -90,12 +88,12 @@ func (qm *QoSManager) isCircuitOpen() bool {
 
 // shouldAdaptiveThrottle checks if request should be throttled based on adaptive policy
 func (qm *QoSManager) shouldAdaptiveThrottle(priority int) bool {
-	if !qm.config.QoS.AdaptiveThrottling.Enabled {
+	if !qm.qosConfig.AdaptiveThrottling.Enabled {
 		return false
 	}
 
-	currentLoad := qm.loadCounter.Get()
-	maxLoad := qm.config.QoS.SystemLimits.MaxLoad
+	currentLoad := qm.loadProvider.Get()
+	maxLoad := qm.qosConfig.SystemLimits.MaxLoad
 
 	// Calculate load ratio
 	loadRatio := float64(currentLoad) / float64(maxLoad)
@@ -104,7 +102,7 @@ func (qm *QoSManager) shouldAdaptiveThrottle(priority int) bool {
 	throttleProbability := qm.throttleLevel * (1.0 - float64(priority)/10.0)
 
 	// Increase throttle probability under high load
-	if loadRatio > qm.config.QoS.SystemLimits.HighLoadThreshold {
+	if loadRatio > qm.qosConfig.SystemLimits.HighLoadThreshold {
 		throttleProbability *= (1.0 + loadRatio)
 	}
 
@@ -129,7 +127,7 @@ func (qm *QoSManager) UpdateMetrics(responseTime time.Duration, success bool) {
 
 // updateCircuitBreaker updates circuit breaker state based on request success
 func (qm *QoSManager) updateCircuitBreaker(success bool) {
-	if !qm.config.QoS.CircuitBreaker.Enabled {
+	if !qm.qosConfig.CircuitBreaker.Enabled {
 		return
 	}
 
@@ -137,7 +135,7 @@ func (qm *QoSManager) updateCircuitBreaker(success bool) {
 		qm.failureCount = 0
 	} else {
 		qm.failureCount++
-		if qm.failureCount >= qm.config.QoS.CircuitBreaker.FailureThreshold {
+		if qm.failureCount >= qm.qosConfig.CircuitBreaker.FailureThreshold {
 			qm.circuitOpen = true
 			qm.circuitOpenTime = time.Now()
 			qm.logger.Warn("Circuit breaker opened due to high failure rate",
@@ -148,12 +146,12 @@ func (qm *QoSManager) updateCircuitBreaker(success bool) {
 
 // updateAdaptiveThrottling adjusts throttle level based on system performance
 func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
-	if !qm.config.QoS.AdaptiveThrottling.Enabled {
+	if !qm.qosConfig.AdaptiveThrottling.Enabled {
 		return
 	}
 
 	// Only adjust throttling every few seconds to avoid oscillation
-	adjustmentInterval := qm.config.QoS.SystemLimits.AdjustmentInterval
+	adjustmentInterval := qm.qosConfig.SystemLimits.AdjustmentInterval
 	if adjustmentDuration, err := time.ParseDuration(adjustmentInterval); err == nil {
 		if time.Since(qm.lastAdjustment) < adjustmentDuration {
 			return
@@ -162,18 +160,18 @@ func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
 		return
 	}
 
-	currentLoad := qm.loadCounter.Get()
-	maxLoad := qm.config.QoS.SystemLimits.MaxLoad
+	currentLoad := qm.loadProvider.Get()
+	maxLoad := qm.qosConfig.SystemLimits.MaxLoad
 	loadRatio := float64(currentLoad) / float64(maxLoad)
 
-	// Get baseline from stats analyzer
-	p90Baseline := qm.statsAnalyzer.P90()
+	// Get baseline from stats provider
+	p90Baseline := qm.statsProvider.P90()
 
 	// Get P95 high load threshold from observer
 	p95HighLoadThreshold := qm.observer.HighLoadThreshold()
 
 	// Adjust throttle level based on load, response time, and P95 threshold
-	throttleAdjustment := qm.config.QoS.SystemLimits.ThrottleAdjustment
+	throttleAdjustment := qm.qosConfig.SystemLimits.ThrottleAdjustment
 
 	// Significantly increase throttling if response time exceeds P95 threshold
 	if p95HighLoadThreshold > 0 && responseTime > p95HighLoadThreshold {
@@ -183,13 +181,13 @@ func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
 			zap.Float64("throttle_level", qm.throttleLevel),
 			zap.Duration("response_time", responseTime),
 			zap.Duration("p95_threshold", p95HighLoadThreshold))
-	} else if loadRatio > qm.config.QoS.SystemLimits.HighLoadThreshold || (p90Baseline > 0 && responseTime > p90Baseline*2) {
+	} else if loadRatio > qm.qosConfig.SystemLimits.HighLoadThreshold || (p90Baseline > 0 && responseTime > p90Baseline*2) {
 		// Standard throttling increase
 		qm.throttleLevel = min(1.0, qm.throttleLevel+throttleAdjustment)
 		qm.logger.Info("Increased throttle level",
 			zap.Float64("throttle_level", qm.throttleLevel),
 			zap.Float64("load_ratio", loadRatio))
-	} else if loadRatio < qm.config.QoS.SystemLimits.LowLoadThreshold && (p90Baseline == 0 || responseTime < p90Baseline) && (p95HighLoadThreshold == 0 || responseTime < time.Duration(float64(p95HighLoadThreshold)*0.8)) {
+	} else if loadRatio < qm.qosConfig.SystemLimits.LowLoadThreshold && (p90Baseline == 0 || responseTime < p90Baseline) && (p95HighLoadThreshold == 0 || responseTime < time.Duration(float64(p95HighLoadThreshold)*0.8)) {
 		// Decrease throttling only when well below all thresholds
 		qm.throttleLevel = max(0.0, qm.throttleLevel-throttleAdjustment/2)
 		qm.logger.Info("Decreased throttle level",
@@ -217,11 +215,11 @@ func (qm *QoSManager) GetMetrics() map[string]interface{} {
 		"throttle_level":    qm.throttleLevel,
 		"circuit_open":      qm.circuitOpen,
 		"failure_count":     qm.failureCount,
-		"current_load":      qm.loadCounter.Get(),
+		"current_load":      qm.loadProvider.Get(),
 		"response_time_p50": qm.responseTimeP50.Milliseconds(),
 		"response_time_p90": qm.responseTimeP90.Milliseconds(),
-		"stats_p50":         qm.statsAnalyzer.P50().Milliseconds(),
-		"stats_p90":         qm.statsAnalyzer.P90().Milliseconds(),
+		"stats_p50":         qm.statsProvider.P50().Milliseconds(),
+		"stats_p90":         qm.statsProvider.P90().Milliseconds(),
 	}
 }
 

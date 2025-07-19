@@ -1,6 +1,12 @@
 package load
 
-import "sync/atomic"
+import (
+	"qqbotrouter/interfaces"
+	"sync/atomic"
+)
+
+// Ensure Counter implements LoadProvider interface
+var _ interfaces.LoadProvider = (*Counter)(nil)
 
 // Counter is a thread-safe counter for tracking system load.
 type Counter struct {
