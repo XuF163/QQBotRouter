@@ -73,7 +73,7 @@ func main() {
 	qosObserver := observer.NewObserver(time.Duration(cfg.IntelligentSchedulingPolicy.DynamicLoadTuning.LatencyThreshold)*time.Millisecond, 100)
 	mlTrainer := ml_trainer.NewMLTrainer(statsAnalyzer)
 	qosManager := qos.NewQoSManager(cfg, loadCounter, statsAnalyzer, logger)
-	mainScheduler := scheduler.NewScheduler(statsAnalyzer, cfg.IntelligentSchedulingPolicy.CognitiveScheduling, loadCounter)
+	mainScheduler := scheduler.NewScheduler(statsAnalyzer, cfg.IntelligentSchedulingPolicy.CognitiveScheduling, &cfg.Scheduler, loadCounter)
 
 	// 3. Start all background services
 	ctx := context.Background()

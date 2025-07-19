@@ -2,6 +2,16 @@ package config
 
 // SchedulerConfig contains scheduler-specific configuration
 type SchedulerConfig struct {
+	// Priority Settings
+	PrioritySettings struct {
+		BasePriority       int `yaml:"base_priority"`
+		MinPriority        int `yaml:"min_priority"`
+		MaxPriority        int `yaml:"max_priority"`
+		HighLoadAdjustment int `yaml:"high_load_adjustment"`
+		LowLoadAdjustment  int `yaml:"low_load_adjustment"`
+		FastUserBonus      int `yaml:"fast_user_bonus"`
+	} `yaml:"priority_settings"`
+
 	// Cognitive Scheduling
 	CognitiveScheduling struct {
 		Enabled             bool    `yaml:"enabled"`
@@ -36,6 +46,21 @@ type SchedulerConfig struct {
 // GetDefaultSchedulerConfig returns default scheduler configuration
 func GetDefaultSchedulerConfig() SchedulerConfig {
 	return SchedulerConfig{
+		PrioritySettings: struct {
+			BasePriority       int `yaml:"base_priority"`
+			MinPriority        int `yaml:"min_priority"`
+			MaxPriority        int `yaml:"max_priority"`
+			HighLoadAdjustment int `yaml:"high_load_adjustment"`
+			LowLoadAdjustment  int `yaml:"low_load_adjustment"`
+			FastUserBonus      int `yaml:"fast_user_bonus"`
+		}{
+			BasePriority:       5,
+			MinPriority:        1,
+			MaxPriority:        10,
+			HighLoadAdjustment: -2,
+			LowLoadAdjustment:  1,
+			FastUserBonus:      2,
+		},
 		CognitiveScheduling: struct {
 			Enabled             bool    `yaml:"enabled"`
 			LearningRate        float64 `yaml:"learning_rate"`

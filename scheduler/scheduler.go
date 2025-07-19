@@ -64,21 +64,23 @@ func (pq *PriorityQueue) Pop() interface{} {
 
 // Scheduler handles asynchronous request processing and priority scheduling.
 type Scheduler struct {
-	pq            PriorityQueue
-	statsAnalyzer *stats.StatsAnalyzer
-	config        *config.CognitiveScheduling
-	loadCounter   *load.Counter
-	workerPool    chan *Request
+	pq              PriorityQueue
+	statsAnalyzer   *stats.StatsAnalyzer
+	config          *config.CognitiveScheduling
+	schedulerConfig *config.SchedulerConfig
+	loadCounter     *load.Counter
+	workerPool      chan *Request
 }
 
 // NewScheduler creates a new Scheduler.
-func NewScheduler(statsAnalyzer *stats.StatsAnalyzer, config *config.CognitiveScheduling, loadCounter *load.Counter) *Scheduler {
+func NewScheduler(statsAnalyzer *stats.StatsAnalyzer, config *config.CognitiveScheduling, schedulerConfig *config.SchedulerConfig, loadCounter *load.Counter) *Scheduler {
 	s := &Scheduler{
-		pq:            make(PriorityQueue, 0),
-		statsAnalyzer: statsAnalyzer,
-		config:        config,
-		loadCounter:   loadCounter,
-		workerPool:    make(chan *Request, config.WorkerPoolSize),
+		pq:              make(PriorityQueue, 0),
+		statsAnalyzer:   statsAnalyzer,
+		config:          config,
+		schedulerConfig: schedulerConfig,
+		loadCounter:     loadCounter,
+		workerPool:      make(chan *Request, config.WorkerPoolSize),
 	}
 	heap.Init(&s.pq)
 	return s
@@ -131,51 +133,38 @@ func (s *Scheduler) parseMessage(body []byte) (userID, message string) {
 
 // calculatePriority calculates request priority based on user behavior and system load
 func (s *Scheduler) calculatePriority(userID, message string) int {
-	basePriority := 5 // Default priority (1-10 scale)
+	// 使用配置文件中的优先级设置，而不是硬编码值
+	basePriority := s.schedulerConfig.PrioritySettings.BasePriority
 
 	// Factor 1: System load adjustment
 	currentLoad := s.loadCounter.Get()
-	if currentLoad > 100 {
-		basePriority -= 2 // Lower priority under high load
-	} else if currentLoad < 10 {
-		basePriority += 1 // Higher priority under low load
+	maxLoad := int64(100) // 这个值应该从 QoS 配置中获取，但这里暂时保持兼容性
+	if currentLoad > maxLoad {
+		basePriority += s.schedulerConfig.PrioritySettings.HighLoadAdjustment
+	} else if currentLoad < maxLoad/10 {
+		basePriority += s.schedulerConfig.PrioritySettings.LowLoadAdjustment
 	}
 
 	// Factor 2: Message pattern analysis
-	if s.isSpamPattern(message) {
-		basePriority = 1 // Lowest priority for spam
-	} else if s.isHighPriorityMessage(message) {
-		basePriority = 10 // Highest priority for important messages
+	if utils.IsSpamPattern(message) {
+		basePriority = s.schedulerConfig.PrioritySettings.MinPriority // Lowest priority for spam
+	} else if utils.IsHighPriorityMessage(message) {
+		basePriority = s.schedulerConfig.PrioritySettings.MaxPriority // Highest priority for important messages
 	}
 
 	// Factor 3: User behavior analysis (simplified)
-	if s.isFastUser(userID) {
-		basePriority += 2 // Higher priority for active users
+	if utils.IsFastUser(userID) {
+		basePriority += s.schedulerConfig.PrioritySettings.FastUserBonus // Higher priority for active users
 	}
 
 	// Ensure priority is within valid range
-	if basePriority < 1 {
-		basePriority = 1
-	} else if basePriority > 10 {
-		basePriority = 10
+	if basePriority < s.schedulerConfig.PrioritySettings.MinPriority {
+		basePriority = s.schedulerConfig.PrioritySettings.MinPriority
+	} else if basePriority > s.schedulerConfig.PrioritySettings.MaxPriority {
+		basePriority = s.schedulerConfig.PrioritySettings.MaxPriority
 	}
 
 	return basePriority
-}
-
-// isSpamPattern detects potential spam messages
-func (s *Scheduler) isSpamPattern(message string) bool {
-	return utils.IsSpamPattern(message)
-}
-
-// isHighPriorityMessage detects high priority messages
-func (s *Scheduler) isHighPriorityMessage(message string) bool {
-	return utils.IsHighPriorityMessage(message)
-}
-
-// isFastUser determines if a user is a fast/active user (simplified implementation)
-func (s *Scheduler) isFastUser(userID string) bool {
-	return utils.IsFastUser(userID)
 }
 
 // worker processes requests from the worker pool.

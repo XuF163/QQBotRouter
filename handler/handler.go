@@ -33,6 +33,15 @@ func (h *WebhookHandler) writeJSONResponse(rw http.ResponseWriter, statusCode in
 	}
 }
 
+// writeErrorResponse writes a standardized error response
+func (h *WebhookHandler) writeErrorResponse(rw http.ResponseWriter, statusCode int, message string, logFields ...zap.Field) {
+	h.logger.Error("Request failed", append([]zap.Field{
+		zap.Int("status_code", statusCode),
+		zap.String("error_message", message),
+	}, logFields...)...)
+	http.Error(rw, message, statusCode)
+}
+
 // NewWebhookHandler creates a new WebhookHandler.
 func NewWebhookHandler(logger *zap.Logger, scheduler *scheduler.Scheduler, qosManager *qos.QoSManager) *WebhookHandler {
 	return &WebhookHandler{
@@ -47,8 +56,7 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// 1. Read the raw body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.logger.Error("Failed to read request body", zap.Error(err))
-		http.Error(rw, "Failed to read body", http.StatusInternalServerError)
+		h.writeErrorResponse(rw, http.StatusInternalServerError, "Failed to read body", zap.Error(err))
 		return
 	}
 	// Restore the body so it can be read again later
@@ -57,27 +65,25 @@ func (h *WebhookHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// 2. Get bot configuration for the requested host and path
 	bot, ok := config.GetBotConfigFromRequest(r.Host, r.URL.Path)
 	if !ok {
-		h.logger.Warn("Unauthorized: No bot configured",
+		h.writeErrorResponse(rw, http.StatusUnauthorized, "Unauthorized",
 			zap.String("host", r.Host),
 			zap.String("path", r.URL.Path))
-		http.Error(rw, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	// 3. Verify the signature (mandatory for all requests)
 	if !VerifySignature(h.logger, r.Header, body, bot.Secret) {
-		h.logger.Warn("Unauthorized: Signature verification failed",
+		h.writeErrorResponse(rw, http.StatusUnauthorized, "Unauthorized",
 			zap.String("host", r.Host),
-			zap.String("path", r.URL.Path))
-		http.Error(rw, "Unauthorized", http.StatusUnauthorized)
+			zap.String("path", r.URL.Path),
+			zap.String("reason", "signature verification failed"))
 		return
 	}
 
 	// 4. Parse the packet to determine the operation
 	var packet WebhookPacket
 	if err := json.Unmarshal(body, &packet); err != nil {
-		h.logger.Error("Failed to parse webhook packet", zap.Error(err))
-		http.Error(rw, "Bad Request", http.StatusBadRequest)
+		h.writeErrorResponse(rw, http.StatusBadRequest, "Bad Request", zap.Error(err))
 		return
 	}
 

@@ -4,6 +4,15 @@ import "time"
 
 // QoSConfig contains QoS-specific configuration
 type QoSConfig struct {
+	// System Limits
+	SystemLimits struct {
+		MaxLoad            int     `yaml:"max_load"`
+		HighLoadThreshold  float64 `yaml:"high_load_threshold"`
+		LowLoadThreshold   float64 `yaml:"low_load_threshold"`
+		ThrottleAdjustment float64 `yaml:"throttle_adjustment"`
+		AdjustmentInterval string  `yaml:"adjustment_interval"`
+	} `yaml:"system_limits"`
+
 	// Dynamic Load Balancing
 	DynamicLoadBalancing struct {
 		Enabled            bool    `yaml:"enabled"`
@@ -40,6 +49,19 @@ type QoSConfig struct {
 // GetDefaultQoSConfig returns default QoS configuration
 func GetDefaultQoSConfig() QoSConfig {
 	return QoSConfig{
+		SystemLimits: struct {
+			MaxLoad            int     `yaml:"max_load"`
+			HighLoadThreshold  float64 `yaml:"high_load_threshold"`
+			LowLoadThreshold   float64 `yaml:"low_load_threshold"`
+			ThrottleAdjustment float64 `yaml:"throttle_adjustment"`
+			AdjustmentInterval string  `yaml:"adjustment_interval"`
+		}{
+			MaxLoad:            100,
+			HighLoadThreshold:  0.8,
+			LowLoadThreshold:   0.5,
+			ThrottleAdjustment: 0.1,
+			AdjustmentInterval: "5s",
+		},
 		DynamicLoadBalancing: struct {
 			Enabled            bool    `yaml:"enabled"`
 			LoadThreshold      float64 `yaml:"load_threshold"`

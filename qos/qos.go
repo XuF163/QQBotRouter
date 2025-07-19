@@ -91,7 +91,7 @@ func (qm *QoSManager) shouldAdaptiveThrottle(priority int) bool {
 	}
 
 	currentLoad := qm.loadCounter.Get()
-	maxLoad := 100 // Default max concurrent requests
+	maxLoad := qm.config.QoS.SystemLimits.MaxLoad
 
 	// Calculate load ratio
 	loadRatio := float64(currentLoad) / float64(maxLoad)
@@ -100,7 +100,7 @@ func (qm *QoSManager) shouldAdaptiveThrottle(priority int) bool {
 	throttleProbability := qm.throttleLevel * (1.0 - float64(priority)/10.0)
 
 	// Increase throttle probability under high load
-	if loadRatio > 0.8 {
+	if loadRatio > qm.config.QoS.SystemLimits.HighLoadThreshold {
 		throttleProbability *= (1.0 + loadRatio)
 	}
 
@@ -149,27 +149,33 @@ func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
 	}
 
 	// Only adjust throttling every few seconds to avoid oscillation
-	if time.Since(qm.lastAdjustment) < 5*time.Second {
+	adjustmentInterval := qm.config.QoS.SystemLimits.AdjustmentInterval
+	if adjustmentDuration, err := time.ParseDuration(adjustmentInterval); err == nil {
+		if time.Since(qm.lastAdjustment) < adjustmentDuration {
+			return
+		}
+	} else if time.Since(qm.lastAdjustment) < 5*time.Second {
 		return
 	}
 
 	currentLoad := qm.loadCounter.Get()
-	maxLoad := 100 // Default max concurrent requests
+	maxLoad := qm.config.QoS.SystemLimits.MaxLoad
 	loadRatio := float64(currentLoad) / float64(maxLoad)
 
 	// Get baseline from stats analyzer
 	p90Baseline := qm.statsAnalyzer.P90()
 
 	// Adjust throttle level based on load and response time
-	if loadRatio > 0.8 || (p90Baseline > 0 && responseTime > p90Baseline*2) {
+	throttleAdjustment := qm.config.QoS.SystemLimits.ThrottleAdjustment
+	if loadRatio > qm.config.QoS.SystemLimits.HighLoadThreshold || (p90Baseline > 0 && responseTime > p90Baseline*2) {
 		// Increase throttling
-		qm.throttleLevel = min(1.0, qm.throttleLevel+0.1)
+		qm.throttleLevel = min(1.0, qm.throttleLevel+throttleAdjustment)
 		qm.logger.Info("Increased throttle level",
 			zap.Float64("throttle_level", qm.throttleLevel),
 			zap.Float64("load_ratio", loadRatio))
-	} else if loadRatio < 0.5 && (p90Baseline == 0 || responseTime < p90Baseline) {
+	} else if loadRatio < qm.config.QoS.SystemLimits.LowLoadThreshold && (p90Baseline == 0 || responseTime < p90Baseline) {
 		// Decrease throttling
-		qm.throttleLevel = max(0.0, qm.throttleLevel-0.05)
+		qm.throttleLevel = max(0.0, qm.throttleLevel-throttleAdjustment/2)
 		qm.logger.Info("Decreased throttle level",
 			zap.Float64("throttle_level", qm.throttleLevel),
 			zap.Float64("load_ratio", loadRatio))
