@@ -356,3 +356,35 @@ func (s *Scheduler) checkRegexRoutes(request *Request) []string {
 
 	return nil
 }
+
+// UpdateConfig updates the scheduler configuration during hot reload
+func (s *Scheduler) UpdateConfig(newSchedulerConfig *config.SchedulerConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	oldConfig := s.schedulerConfig
+	s.schedulerConfig = newSchedulerConfig
+
+	// Check if worker pool size changed
+	if oldConfig.WorkerPoolSize != newSchedulerConfig.WorkerPoolSize {
+		// Note: In a production system, you might want to gracefully resize the worker pool
+		// For now, we'll just log the change and note that it requires a restart
+		zap.L().Warn("Worker pool size changed - restart required for full effect",
+			zap.Int("old_size", oldConfig.WorkerPoolSize),
+			zap.Int("new_size", newSchedulerConfig.WorkerPoolSize))
+	}
+
+	// Clear user request history if user behavior analysis settings changed significantly
+	if oldConfig.UserBehaviorAnalysis.Enabled != newSchedulerConfig.UserBehaviorAnalysis.Enabled ||
+		oldConfig.UserBehaviorAnalysis.MinDataPointsForBaseline != newSchedulerConfig.UserBehaviorAnalysis.MinDataPointsForBaseline {
+		s.userLastRequest = make(map[string]time.Time)
+		zap.L().Info("User behavior analysis settings changed, clearing request history")
+	}
+
+	// Log configuration update
+	zap.L().Info("Scheduler configuration updated",
+		zap.Int("worker_pool_size", newSchedulerConfig.WorkerPoolSize),
+		zap.Bool("message_classification_enabled", newSchedulerConfig.MessageClassification.Enabled),
+		zap.Bool("user_behavior_analysis_enabled", newSchedulerConfig.UserBehaviorAnalysis.Enabled),
+		zap.Int("base_priority", newSchedulerConfig.PrioritySettings.BasePriority))
+}

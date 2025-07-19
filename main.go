@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,7 +24,75 @@ import (
 	"qqbotrouter/stats"
 )
 
-var logger *zap.Logger
+var (
+	logger        *zap.Logger
+	configWatcher *config.ConfigWatcher
+	currentConfig *config.Config
+	configMutex   sync.RWMutex
+)
+
+// handleConfigReload handles configuration reload and updates relevant components
+func handleConfigReload(newConfig *config.Config, qosManager *qos.QoSManager, mainScheduler *scheduler.Scheduler) {
+	logger.Info("Processing configuration reload...")
+
+	// Update global config atomically
+	configMutex.Lock()
+	oldConfig := currentConfig
+	currentConfig = newConfig
+	configMutex.Unlock()
+
+	// Check if logger level changed
+	if oldConfig.LogLevel != newConfig.LogLevel {
+		logger.Info("Log level changed, reinitializing logger",
+			zap.String("old_level", oldConfig.LogLevel),
+			zap.String("new_level", newConfig.LogLevel))
+		initLogger(newConfig.LogLevel)
+	}
+
+	// Update QoS configuration
+	if qosManager != nil {
+		qosManager.UpdateConfig(&newConfig.QoS)
+		logger.Info("QoS configuration updated")
+	}
+
+	// Update Scheduler configuration
+	if mainScheduler != nil {
+		mainScheduler.UpdateConfig(&newConfig.Scheduler)
+		logger.Info("Scheduler configuration updated")
+	}
+
+	// Log configuration changes summary
+	logConfigChanges(oldConfig, newConfig)
+
+	logger.Info("Configuration reload completed successfully")
+}
+
+// logConfigChanges logs a summary of configuration changes
+func logConfigChanges(oldConfig, newConfig *config.Config) {
+	changes := []string{}
+
+	if oldConfig.LogLevel != newConfig.LogLevel {
+		changes = append(changes, fmt.Sprintf("log_level: %s -> %s", oldConfig.LogLevel, newConfig.LogLevel))
+	}
+	if oldConfig.HTTPSPort != newConfig.HTTPSPort {
+		changes = append(changes, fmt.Sprintf("https_port: %s -> %s", oldConfig.HTTPSPort, newConfig.HTTPSPort))
+	}
+	if oldConfig.HTTPPort != newConfig.HTTPPort {
+		changes = append(changes, fmt.Sprintf("http_port: %s -> %s", oldConfig.HTTPPort, newConfig.HTTPPort))
+	}
+	if len(oldConfig.Bots) != len(newConfig.Bots) {
+		changes = append(changes, fmt.Sprintf("bots_count: %d -> %d", len(oldConfig.Bots), len(newConfig.Bots)))
+	}
+	if oldConfig.QoS.HotReload.Enabled != newConfig.QoS.HotReload.Enabled {
+		changes = append(changes, fmt.Sprintf("hot_reload: %t -> %t", oldConfig.QoS.HotReload.Enabled, newConfig.QoS.HotReload.Enabled))
+	}
+
+	if len(changes) > 0 {
+		logger.Info("Configuration changes detected", zap.Strings("changes", changes))
+	} else {
+		logger.Info("No significant configuration changes detected")
+	}
+}
 
 func initLogger(logLevel string) {
 	var err error
@@ -65,6 +134,11 @@ func main() {
 	}
 	cfg.SetDefaults()
 
+	// Store initial config globally
+	configMutex.Lock()
+	currentConfig = cfg
+	configMutex.Unlock()
+
 	// Initialize logger based on config
 	initLogger(cfg.LogLevel)
 
@@ -100,11 +174,26 @@ func main() {
 
 	// 5. Start config hot-reloader (if enabled)
 	if cfg.QoS.HotReload.Enabled {
-		// The actual hot-reloading logic is not implemented in this version.
-		// The function call is left here as a placeholder.
-		go config.Watch("config.yaml", func(c *config.Config) {
-			logger.Info("Configuration reload triggered (not implemented).")
-		})
+		// Create config watcher with proper error handling
+		errorHandler := func(err error) {
+			logger.Error("Configuration watcher error", zap.Error(err))
+		}
+
+		reloadHandler := func(newConfig *config.Config) {
+			handleConfigReload(newConfig, qosManager, mainScheduler)
+		}
+
+		configWatcher, err = config.NewConfigWatcher("config.yaml", reloadHandler, errorHandler)
+		if err != nil {
+			logger.Error("Failed to create config watcher", zap.Error(err))
+		} else {
+			if err := configWatcher.Start(); err != nil {
+				logger.Error("Failed to start config watcher", zap.Error(err))
+			} else {
+				logger.Info("Configuration hot-reload enabled",
+					zap.String("check_interval", cfg.QoS.HotReload.CheckInterval))
+			}
+		}
 	}
 
 	// 6. Set up HTTP/S servers
@@ -148,6 +237,12 @@ func main() {
 		logger.Error("Server shutdown failed", zap.Error(err))
 	} else {
 		logger.Info("Server shutdown completed successfully")
+	}
+
+	// Stop config watcher if running
+	if configWatcher != nil {
+		configWatcher.Stop()
+		logger.Info("Configuration watcher stopped")
 	}
 
 	logger.Info("Application shutdown completed")

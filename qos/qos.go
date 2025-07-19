@@ -258,6 +258,38 @@ func (qm *QoSManager) performPeriodicAdjustments() {
 	}
 }
 
+// UpdateConfig updates the QoS configuration during hot reload
+func (qm *QoSManager) UpdateConfig(newConfig *config.QoSConfig) {
+	qm.mu.Lock()
+	defer qm.mu.Unlock()
+
+	oldConfig := qm.qosConfig
+	qm.qosConfig = newConfig
+
+	// Reset circuit breaker if configuration changed
+	if oldConfig.CircuitBreaker.Enabled != newConfig.CircuitBreaker.Enabled ||
+		oldConfig.CircuitBreaker.FailureThreshold != newConfig.CircuitBreaker.FailureThreshold {
+		qm.circuitOpen = false
+		qm.failureCount = 0
+		qm.logger.Info("Circuit breaker configuration updated, resetting state")
+	}
+
+	// Reset adaptive throttling if configuration changed
+	if oldConfig.AdaptiveThrottling.Enabled != newConfig.AdaptiveThrottling.Enabled ||
+		oldConfig.AdaptiveThrottling.BaseThreshold != newConfig.AdaptiveThrottling.BaseThreshold ||
+		oldConfig.AdaptiveThrottling.MaxThreshold != newConfig.AdaptiveThrottling.MaxThreshold {
+		qm.throttleLevel = 0.0
+		qm.lastAdjustment = time.Now()
+		qm.logger.Info("Adaptive throttling configuration updated, resetting state")
+	}
+
+	// Log configuration update
+	qm.logger.Info("QoS configuration updated",
+		zap.Bool("circuit_breaker_enabled", newConfig.CircuitBreaker.Enabled),
+		zap.Bool("adaptive_throttling_enabled", newConfig.AdaptiveThrottling.Enabled),
+		zap.Int("max_load", newConfig.SystemLimits.MaxLoad))
+}
+
 // Helper functions
 func min(a, b float64) float64 {
 	if a < b {

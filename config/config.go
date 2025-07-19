@@ -5,7 +5,10 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
 )
 
@@ -94,12 +97,164 @@ func (c *Config) GetDomains() []string {
 	return domains
 }
 
-// Watch watches for configuration file changes and reloads
+// ConfigWatcher manages configuration file watching and hot reloading
+type ConfigWatcher struct {
+	mu            sync.RWMutex
+	configPath    string
+	currentConfig *Config
+	watcher       *fsnotify.Watcher
+	reloadFunc    func(*Config)
+	errorHandler  func(error)
+	done          chan struct{}
+}
+
+// NewConfigWatcher creates a new configuration watcher
+func NewConfigWatcher(configPath string, reloadFunc func(*Config), errorHandler func(error)) (*ConfigWatcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file watcher: %w", err)
+	}
+
+	// Load initial configuration
+	initialConfig, err := Load(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load initial config: %w", err)
+	}
+
+	cw := &ConfigWatcher{
+		configPath:    configPath,
+		currentConfig: initialConfig,
+		watcher:       watcher,
+		reloadFunc:    reloadFunc,
+		errorHandler:  errorHandler,
+		done:          make(chan struct{}),
+	}
+
+	return cw, nil
+}
+
+// Start begins watching the configuration file for changes
+func (cw *ConfigWatcher) Start() error {
+	// Add the config file to the watcher
+	if err := cw.watcher.Add(cw.configPath); err != nil {
+		return fmt.Errorf("failed to watch config file: %w", err)
+	}
+
+	go cw.watchLoop()
+	return nil
+}
+
+// Stop stops the configuration watcher
+func (cw *ConfigWatcher) Stop() {
+	close(cw.done)
+	cw.watcher.Close()
+}
+
+// GetCurrentConfig returns the current configuration (thread-safe)
+func (cw *ConfigWatcher) GetCurrentConfig() *Config {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	return cw.currentConfig
+}
+
+// watchLoop is the main event loop for file watching
+func (cw *ConfigWatcher) watchLoop() {
+	// Debounce timer to avoid multiple rapid reloads
+	var debounceTimer *time.Timer
+	const debounceDelay = 500 * time.Millisecond
+
+	for {
+		select {
+		case event, ok := <-cw.watcher.Events:
+			if !ok {
+				return
+			}
+
+			// Only react to write events (file modifications)
+			if event.Op&fsnotify.Write == fsnotify.Write {
+				// Reset debounce timer
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+
+				debounceTimer = time.AfterFunc(debounceDelay, func() {
+					cw.reloadConfig()
+				})
+			}
+
+		case err, ok := <-cw.watcher.Errors:
+			if !ok {
+				return
+			}
+			if cw.errorHandler != nil {
+				cw.errorHandler(fmt.Errorf("file watcher error: %w", err))
+			}
+
+		case <-cw.done:
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			return
+		}
+	}
+}
+
+// reloadConfig attempts to reload the configuration file
+func (cw *ConfigWatcher) reloadConfig() {
+	// Load new configuration
+	newConfig, err := Load(cw.configPath)
+	if err != nil {
+		if cw.errorHandler != nil {
+			cw.errorHandler(fmt.Errorf("failed to reload config: %w", err))
+		}
+		return
+	}
+
+	// Validate new configuration
+	if err := newConfig.Validate(); err != nil {
+		if cw.errorHandler != nil {
+			cw.errorHandler(fmt.Errorf("invalid config during reload: %w", err))
+		}
+		return
+	}
+
+	// Set defaults for new configuration
+	newConfig.SetDefaults()
+
+	// Atomically update current configuration
+	cw.mu.Lock()
+	oldConfig := cw.currentConfig
+	cw.currentConfig = newConfig
+	cw.mu.Unlock()
+
+	// Call reload function if provided
+	if cw.reloadFunc != nil {
+		cw.reloadFunc(newConfig)
+	}
+
+	fmt.Printf("Configuration successfully reloaded from %s\n", cw.configPath)
+	_ = oldConfig // Prevent unused variable warning
+}
+
+// Watch watches for configuration file changes and reloads (legacy function for backward compatibility)
 func Watch(configPath string, reloadFunc func(*Config)) {
-	// In a real application, you'd use a library like fsnotify
-	// to watch for file changes. For this example, we'll just
-	// log that it's not implemented.
-	fmt.Printf("File watching is not implemented in this version. Please restart the application to apply configuration changes.")
+	errorHandler := func(err error) {
+		fmt.Printf("Config watcher error: %v\n", err)
+	}
+
+	watcher, err := NewConfigWatcher(configPath, reloadFunc, errorHandler)
+	if err != nil {
+		fmt.Printf("Failed to create config watcher: %v\n", err)
+		return
+	}
+
+	if err := watcher.Start(); err != nil {
+		fmt.Printf("Failed to start config watcher: %v\n", err)
+		return
+	}
+
+	// Keep the watcher running (this is a blocking call in the legacy interface)
+	select {}
 }
 
 // GetBotConfig returns the bot configuration for a given webhook URL
