@@ -29,7 +29,7 @@ func sendResult(ctx context.Context, resultChan chan<- ForwardResult, result For
 }
 
 // ForwardRequestWithResult forwards the request and returns the result via channel
-func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destination string, body []byte, header http.Header, resultChan chan<- ForwardResult, loadCounter *load.Counter) {
+func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destination string, body []byte, header http.Header, resultChan chan<- ForwardResult, loadCounter *load.Counter, forwardTimeout time.Duration) {
 	loadCounter.Increment()
 	defer loadCounter.Decrement()
 
@@ -52,7 +52,7 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 	}
 	req.Header = header.Clone()
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: forwardTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Debug("Failed to forward request",
@@ -83,7 +83,7 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 }
 
 // ForwardToMultipleDestinations forwards to multiple destinations and waits for all results
-func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, destinations []string, body []byte, header http.Header, timeout time.Duration, loadCounter *load.Counter) []ForwardResult {
+func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, destinations []string, body []byte, header http.Header, timeout time.Duration, loadCounter *load.Counter, forwardTimeout time.Duration) []ForwardResult {
 	if len(destinations) == 0 {
 		return []ForwardResult{}
 	}
@@ -100,7 +100,7 @@ func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, dest
 		wg.Add(1)
 		go func(destination string) {
 			defer wg.Done()
-			ForwardRequestWithResult(ctxWithTimeout, logger, destination, body, header, resultChan, loadCounter)
+			ForwardRequestWithResult(ctxWithTimeout, logger, destination, body, header, resultChan, loadCounter, forwardTimeout)
 		}(dest)
 	}
 

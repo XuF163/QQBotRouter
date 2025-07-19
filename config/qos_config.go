@@ -44,6 +44,19 @@ type QoSConfig struct {
 		MetricsInterval  string `yaml:"metrics_interval"`
 		HistoryRetention string `yaml:"history_retention"`
 	} `yaml:"performance_monitoring"`
+
+	// Hot Reload
+	HotReload struct {
+		Enabled       bool   `yaml:"enabled"`
+		CheckInterval string `yaml:"check_interval"`
+	} `yaml:"hot_reload"`
+
+	// Request Timeouts
+	RequestTimeouts struct {
+		ForwardTimeout    string `yaml:"forward_timeout"`
+		ProcessingTimeout string `yaml:"processing_timeout"`
+		IdleCheckInterval string `yaml:"idle_check_interval"`
+	} `yaml:"request_timeouts"`
 }
 
 // GetDefaultQoSConfig returns default QoS configuration
@@ -105,6 +118,22 @@ func GetDefaultQoSConfig() QoSConfig {
 			Enabled:          true,
 			MetricsInterval:  "10s",
 			HistoryRetention: "24h",
+		},
+		HotReload: struct {
+			Enabled       bool   `yaml:"enabled"`
+			CheckInterval string `yaml:"check_interval"`
+		}{
+			Enabled:       false,
+			CheckInterval: "30s",
+		},
+		RequestTimeouts: struct {
+			ForwardTimeout    string `yaml:"forward_timeout"`
+			ProcessingTimeout string `yaml:"processing_timeout"`
+			IdleCheckInterval string `yaml:"idle_check_interval"`
+		}{
+			ForwardTimeout:    "10s",
+			ProcessingTimeout: "12s",
+			IdleCheckInterval: "10ms",
 		},
 	}
 }

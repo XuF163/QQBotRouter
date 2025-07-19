@@ -66,13 +66,14 @@ func (qm *QoSManager) ShouldThrottle(userID string, priority int) bool {
 
 // isCircuitOpen checks if circuit breaker is open
 func (qm *QoSManager) isCircuitOpen() bool {
-	if !qm.config.IntelligentSchedulingPolicy.CircuitBreaker.Enabled {
+	if !qm.config.QoS.CircuitBreaker.Enabled {
 		return false
 	}
 
 	if qm.circuitOpen {
 		// Check if we should try to close the circuit
-		if time.Since(qm.circuitOpenTime) > time.Duration(qm.config.IntelligentSchedulingPolicy.CircuitBreaker.RecoveryTime)*time.Second {
+		recoveryTimeout := qm.config.QoS.ParseDuration(qm.config.QoS.CircuitBreaker.RecoveryTimeout)
+		if time.Since(qm.circuitOpenTime) > recoveryTimeout {
 			qm.circuitOpen = false
 			qm.failureCount = 0
 			qm.logger.Info("Circuit breaker closed, attempting recovery")
@@ -86,7 +87,7 @@ func (qm *QoSManager) isCircuitOpen() bool {
 
 // shouldAdaptiveThrottle checks if request should be throttled based on adaptive policy
 func (qm *QoSManager) shouldAdaptiveThrottle(priority int) bool {
-	if !qm.config.IntelligentSchedulingPolicy.AdaptiveThrottling.Enabled {
+	if !qm.config.QoS.AdaptiveThrottling.Enabled {
 		return false
 	}
 
@@ -125,7 +126,7 @@ func (qm *QoSManager) UpdateMetrics(responseTime time.Duration, success bool) {
 
 // updateCircuitBreaker updates circuit breaker state based on request success
 func (qm *QoSManager) updateCircuitBreaker(success bool) {
-	if !qm.config.IntelligentSchedulingPolicy.CircuitBreaker.Enabled {
+	if !qm.config.QoS.CircuitBreaker.Enabled {
 		return
 	}
 
@@ -133,7 +134,7 @@ func (qm *QoSManager) updateCircuitBreaker(success bool) {
 		qm.failureCount = 0
 	} else {
 		qm.failureCount++
-		if qm.failureCount >= qm.config.IntelligentSchedulingPolicy.CircuitBreaker.MinRequestsForEvaluation {
+		if qm.failureCount >= qm.config.QoS.CircuitBreaker.FailureThreshold {
 			qm.circuitOpen = true
 			qm.circuitOpenTime = time.Now()
 			qm.logger.Warn("Circuit breaker opened due to high failure rate",
@@ -144,7 +145,7 @@ func (qm *QoSManager) updateCircuitBreaker(success bool) {
 
 // updateAdaptiveThrottling adjusts throttle level based on system performance
 func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
-	if !qm.config.IntelligentSchedulingPolicy.AdaptiveThrottling.Enabled {
+	if !qm.config.QoS.AdaptiveThrottling.Enabled {
 		return
 	}
 

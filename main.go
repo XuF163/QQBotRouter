@@ -69,11 +69,11 @@ func main() {
 
 	// 2. Initialize all QoS services
 	loadCounter := load.NewCounter()
-	statsAnalyzer := stats.NewStatsAnalyzer(cfg.IntelligentSchedulingPolicy.DynamicBaselineAnalysis.MinDataPointsForBaseline)
-	qosObserver := observer.NewObserver(time.Duration(cfg.IntelligentSchedulingPolicy.DynamicLoadTuning.LatencyThreshold)*time.Millisecond, 100)
+	statsAnalyzer := stats.NewStatsAnalyzer(cfg.Scheduler.UserBehaviorAnalysis.MinDataPointsForBaseline)
+	qosObserver := observer.NewObserver(time.Duration(cfg.QoS.DynamicLoadBalancing.LoadThreshold)*time.Millisecond, 100)
 	mlTrainer := ml_trainer.NewMLTrainer(statsAnalyzer)
 	qosManager := qos.NewQoSManager(cfg, loadCounter, statsAnalyzer, logger)
-	mainScheduler := scheduler.NewScheduler(statsAnalyzer, cfg.IntelligentSchedulingPolicy.CognitiveScheduling, &cfg.Scheduler, loadCounter)
+	mainScheduler := scheduler.NewScheduler(statsAnalyzer, &cfg.Scheduler, &cfg.QoS, loadCounter)
 
 	// 3. Start all background services
 	ctx := context.Background()
@@ -91,7 +91,7 @@ func main() {
 	certManager := autocert.NewManager(domains, "secret-dir")
 
 	// 5. Start config hot-reloader (if enabled)
-	if cfg.IntelligentSchedulingPolicy.HotReload.Enabled {
+	if cfg.QoS.HotReload.Enabled {
 		// The actual hot-reloading logic is not implemented in this version.
 		// The function call is left here as a placeholder.
 		go config.Watch("config.yaml", func(c *config.Config) {

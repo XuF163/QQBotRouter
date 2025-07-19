@@ -2,6 +2,9 @@ package config
 
 // SchedulerConfig contains scheduler-specific configuration
 type SchedulerConfig struct {
+	// Worker Pool
+	WorkerPoolSize int `yaml:"worker_pool_size"`
+
 	// Priority Settings
 	PrioritySettings struct {
 		BasePriority       int `yaml:"base_priority"`
@@ -29,9 +32,10 @@ type SchedulerConfig struct {
 
 	// User Behavior Analysis
 	UserBehaviorAnalysis struct {
-		Enabled           bool   `yaml:"enabled"`
-		AnalysisWindow    string `yaml:"analysis_window"`
-		BehaviorThreshold int    `yaml:"behavior_threshold"`
+		Enabled                  bool   `yaml:"enabled"`
+		AnalysisWindow           string `yaml:"analysis_window"`
+		BehaviorThreshold        int    `yaml:"behavior_threshold"`
+		MinDataPointsForBaseline int    `yaml:"min_data_points_for_baseline"`
 	} `yaml:"user_behavior_analysis"`
 
 	// Message Classification
@@ -46,6 +50,7 @@ type SchedulerConfig struct {
 // GetDefaultSchedulerConfig returns default scheduler configuration
 func GetDefaultSchedulerConfig() SchedulerConfig {
 	return SchedulerConfig{
+		WorkerPoolSize: 10,
 		PrioritySettings: struct {
 			BasePriority       int `yaml:"base_priority"`
 			MinPriority        int `yaml:"min_priority"`
@@ -82,13 +87,15 @@ func GetDefaultSchedulerConfig() SchedulerConfig {
 			BatchSize:         10,
 		},
 		UserBehaviorAnalysis: struct {
-			Enabled           bool   `yaml:"enabled"`
-			AnalysisWindow    string `yaml:"analysis_window"`
-			BehaviorThreshold int    `yaml:"behavior_threshold"`
+			Enabled                  bool   `yaml:"enabled"`
+			AnalysisWindow           string `yaml:"analysis_window"`
+			BehaviorThreshold        int    `yaml:"behavior_threshold"`
+			MinDataPointsForBaseline int    `yaml:"min_data_points_for_baseline"`
 		}{
-			Enabled:           true,
-			AnalysisWindow:    "15m",
-			BehaviorThreshold: 50,
+			Enabled:                  true,
+			AnalysisWindow:           "15m",
+			BehaviorThreshold:        50,
+			MinDataPointsForBaseline: 100,
 		},
 		MessageClassification: struct {
 			Enabled          bool     `yaml:"enabled"`

@@ -66,21 +66,21 @@ func (pq *PriorityQueue) Pop() interface{} {
 type Scheduler struct {
 	pq              PriorityQueue
 	statsAnalyzer   *stats.StatsAnalyzer
-	config          *config.CognitiveScheduling
 	schedulerConfig *config.SchedulerConfig
+	qosConfig       *config.QoSConfig
 	loadCounter     *load.Counter
 	workerPool      chan *Request
 }
 
 // NewScheduler creates a new Scheduler.
-func NewScheduler(statsAnalyzer *stats.StatsAnalyzer, config *config.CognitiveScheduling, schedulerConfig *config.SchedulerConfig, loadCounter *load.Counter) *Scheduler {
+func NewScheduler(statsAnalyzer *stats.StatsAnalyzer, schedulerConfig *config.SchedulerConfig, qosConfig *config.QoSConfig, loadCounter *load.Counter) *Scheduler {
 	s := &Scheduler{
 		pq:              make(PriorityQueue, 0),
 		statsAnalyzer:   statsAnalyzer,
-		config:          config,
 		schedulerConfig: schedulerConfig,
+		qosConfig:       qosConfig,
 		loadCounter:     loadCounter,
-		workerPool:      make(chan *Request, config.WorkerPoolSize),
+		workerPool:      make(chan *Request, schedulerConfig.WorkerPoolSize),
 	}
 	heap.Init(&s.pq)
 	return s
@@ -111,7 +111,7 @@ func (s *Scheduler) Submit(ctx context.Context, body []byte, header http.Header,
 
 // Run starts the scheduler's processing loop.
 func (s *Scheduler) Run() {
-	for i := 0; i < s.config.WorkerPoolSize; i++ {
+	for i := 0; i < s.schedulerConfig.WorkerPoolSize; i++ {
 		go s.worker()
 	}
 
@@ -121,7 +121,8 @@ func (s *Scheduler) Run() {
 			s.workerPool <- request
 		} else {
 			// Prevent busy-waiting when the queue is empty
-			time.Sleep(10 * time.Millisecond)
+			idleInterval := s.qosConfig.ParseDuration(s.qosConfig.RequestTimeouts.IdleCheckInterval)
+			time.Sleep(idleInterval)
 		}
 	}
 }
@@ -138,7 +139,7 @@ func (s *Scheduler) calculatePriority(userID, message string) int {
 
 	// Factor 1: System load adjustment
 	currentLoad := s.loadCounter.Get()
-	maxLoad := int64(100) // 这个值应该从 QoS 配置中获取，但这里暂时保持兼容性
+	maxLoad := int64(s.qosConfig.SystemLimits.MaxLoad)
 	if currentLoad > maxLoad {
 		basePriority += s.schedulerConfig.PrioritySettings.HighLoadAdjustment
 	} else if currentLoad < maxLoad/10 {
@@ -174,14 +175,17 @@ func (s *Scheduler) worker() {
 		destinations := s.selectDestinations(request)
 
 		// Forward request and get results
+		processingTimeout := s.qosConfig.ParseDuration(s.qosConfig.RequestTimeouts.ProcessingTimeout)
+		forwardTimeout := s.qosConfig.ParseDuration(s.qosConfig.RequestTimeouts.ForwardTimeout)
 		results := forwarder.ForwardToMultipleDestinations(
 			request.Context,
 			request.Logger,
 			destinations,
 			request.Body,
 			request.Header,
-			12*time.Second, // timeout
+			processingTimeout,
 			s.loadCounter,
+			forwardTimeout,
 		)
 
 		// Check if any destination succeeded
