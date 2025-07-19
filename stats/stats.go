@@ -60,10 +60,15 @@ func (s *StatsAnalyzer) ModeSwitched() {
 	s.modeSwitched <- true
 }
 
-// Run starts the stats analyzer's processing loop.
-func (s *StatsAnalyzer) Run(ticker *time.Ticker) {
+// Run starts the stats analyzer with context support
+func (s *StatsAnalyzer) Run(ctx context.Context) error {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-ticker.C:
 			s.updateBaselines()
 		case <-s.modeSwitched:
@@ -71,6 +76,11 @@ func (s *StatsAnalyzer) Run(ticker *time.Ticker) {
 			s.updateBaselines()
 		}
 	}
+}
+
+// GetTickerInterval returns the interval for periodic execution
+func (s *StatsAnalyzer) GetTickerInterval() string {
+	return "30s"
 }
 
 // RunWithContext starts the stats analyzer's processing loop with context support for graceful shutdown.

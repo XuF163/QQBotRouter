@@ -291,16 +291,18 @@ func (c *Config) Validate() error {
 
 // SetDefaults sets default values for missing configuration fields
 func (c *Config) SetDefaults() {
+	defaults := GetDefaultValues()
+
 	if c.LogLevel == "" {
-		c.LogLevel = "development"
+		c.LogLevel = defaults.Server.LogLevel
 	}
 
 	if c.HTTPSPort == "" {
-		c.HTTPSPort = "8443"
+		c.HTTPSPort = defaults.Server.HTTPSPort
 	}
 
 	if c.HTTPPort == "" {
-		c.HTTPPort = "8444"
+		c.HTTPPort = defaults.Server.HTTPPort
 	}
 
 	// Set QoS defaults
@@ -316,11 +318,14 @@ func (c *Config) SetDefaults() {
 
 // GenerateDefaultConfig generates a default configuration using centralized defaults
 func GenerateDefaultConfig(configPath string) error {
-	// Create default configuration using centralized default functions
+	// Get centralized default values
+	defaults := GetDefaultValues()
+
+	// Create default configuration using centralized default values
 	defaultConfig := Config{
-		LogLevel:  "development",
-		HTTPSPort: "8443",
-		HTTPPort:  "8444",
+		LogLevel:  defaults.Server.LogLevel,
+		HTTPSPort: defaults.Server.HTTPSPort,
+		HTTPPort:  defaults.Server.HTTPPort,
 		QoS:       GetDefaultQoSConfig(),
 		Scheduler: GetDefaultSchedulerConfig(),
 		Bots: map[string]BotConfig{

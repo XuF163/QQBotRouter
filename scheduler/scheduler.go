@@ -64,26 +64,28 @@ func (pq *PriorityQueue) Pop() interface{} {
 
 // Scheduler handles asynchronous request processing and priority scheduling.
 type Scheduler struct {
-	pq              PriorityQueue
-	statsProvider   interfaces.StatProvider
-	schedulerConfig *config.SchedulerConfig
-	qosConfig       *config.QoSConfig
-	loadProvider    interfaces.LoadProvider
-	workerPool      chan *Request
-	userLastRequest map[string]time.Time // Track last request time per user
-	mu              sync.RWMutex         // Protect userLastRequest map
+	pq               PriorityQueue
+	statsProvider    interfaces.StatProvider
+	schedulerConfig  *config.SchedulerConfig
+	qosConfig        *config.QoSConfig
+	loadProvider     interfaces.LoadProvider
+	workerPool       chan *Request
+	userLastRequest  map[string]time.Time // Track last request time per user
+	mu               sync.RWMutex         // Protect userLastRequest map
+	priorityStrategy PriorityStrategy     // Strategy for priority calculation
 }
 
 // NewScheduler creates a new Scheduler.
 func NewScheduler(statsProvider interfaces.StatProvider, schedulerConfig *config.SchedulerConfig, qosConfig *config.QoSConfig, loadProvider interfaces.LoadProvider) *Scheduler {
 	s := &Scheduler{
-		pq:              make(PriorityQueue, 0),
-		statsProvider:   statsProvider,
-		schedulerConfig: schedulerConfig,
-		qosConfig:       qosConfig,
-		loadProvider:    loadProvider,
-		workerPool:      make(chan *Request, schedulerConfig.WorkerPoolSize),
-		userLastRequest: make(map[string]time.Time),
+		pq:               make(PriorityQueue, 0),
+		statsProvider:    statsProvider,
+		schedulerConfig:  schedulerConfig,
+		qosConfig:        qosConfig,
+		loadProvider:     loadProvider,
+		workerPool:       make(chan *Request, schedulerConfig.WorkerPoolSize),
+		userLastRequest:  make(map[string]time.Time),
+		priorityStrategy: NewHybridStrategy(0.6, 0.4), // Default to hybrid strategy
 	}
 	heap.Init(&s.pq)
 	return s
@@ -112,26 +114,8 @@ func (s *Scheduler) Submit(ctx context.Context, body []byte, header http.Header,
 	return true // Successfully queued
 }
 
-// Run starts the scheduler's processing loop.
-func (s *Scheduler) Run() {
-	for i := 0; i < s.schedulerConfig.WorkerPoolSize; i++ {
-		go s.worker()
-	}
-
-	for {
-		if len(s.pq) > 0 {
-			request := heap.Pop(&s.pq).(*Request)
-			s.workerPool <- request
-		} else {
-			// Prevent busy-waiting when the queue is empty
-			idleInterval := s.qosConfig.ParseDuration(s.qosConfig.RequestTimeouts.IdleCheckInterval)
-			time.Sleep(idleInterval)
-		}
-	}
-}
-
-// RunWithContext starts the scheduler's processing loop with context support for graceful shutdown.
-func (s *Scheduler) RunWithContext(ctx context.Context) {
+// Run starts the scheduler with context support
+func (s *Scheduler) Run(ctx context.Context) error {
 	// Start worker goroutines
 	for i := 0; i < s.schedulerConfig.WorkerPoolSize; i++ {
 		go s.workerWithContext(ctx)
@@ -141,7 +125,7 @@ func (s *Scheduler) RunWithContext(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			close(s.workerPool)
-			return
+			return ctx.Err()
 		default:
 			if len(s.pq) > 0 {
 				request := heap.Pop(&s.pq).(*Request)
@@ -149,7 +133,7 @@ func (s *Scheduler) RunWithContext(ctx context.Context) {
 				case s.workerPool <- request:
 				case <-ctx.Done():
 					close(s.workerPool)
-					return
+					return ctx.Err()
 				}
 			} else {
 				// Prevent busy-waiting when the queue is empty
@@ -158,7 +142,7 @@ func (s *Scheduler) RunWithContext(ctx context.Context) {
 				case <-time.After(idleInterval):
 				case <-ctx.Done():
 					close(s.workerPool)
-					return
+					return ctx.Err()
 				}
 			}
 		}
@@ -170,21 +154,15 @@ func (s *Scheduler) parseMessage(body []byte) (userID, message string) {
 	return utils.ParseMessage(body)
 }
 
-// calculatePriority calculates request priority based on user behavior and system load
+// calculatePriority calculates request priority using the configured strategy
 func (s *Scheduler) calculatePriority(userID, message string) int {
-	// 使用配置文件中的优先级设置，而不是硬编码值
-	basePriority := s.schedulerConfig.PrioritySettings.BasePriority
+	// Determine content type from message
+	contentType := s.determineContentType(message)
 
-	// Factor 1: System load adjustment
-	currentLoad := s.loadProvider.Get()
-	maxLoad := int64(s.qosConfig.SystemLimits.MaxLoad)
-	if currentLoad > maxLoad {
-		basePriority += s.schedulerConfig.PrioritySettings.HighLoadAdjustment
-	} else if currentLoad < maxLoad/10 {
-		basePriority += s.schedulerConfig.PrioritySettings.LowLoadAdjustment
-	}
+	// Use strategy pattern for priority calculation
+	priority := s.priorityStrategy.CalculatePriority(userID, contentType, s.statsProvider, s.schedulerConfig)
 
-	// Factor 2: Anti-spam detection using P50 baseline
+	// Apply anti-spam detection using P50 baseline
 	now := time.Now()
 	s.mu.Lock()
 	lastRequestTime, exists := s.userLastRequest[userID]
@@ -197,34 +175,48 @@ func (s *Scheduler) calculatePriority(userID, message string) int {
 
 		// If user's request interval is much shorter than P50 baseline, consider it spam
 		if p50Baseline > 0 && requestInterval < p50Baseline/3 {
-			basePriority -= s.schedulerConfig.PrioritySettings.HighLoadAdjustment * 2 // Significant penalty for potential spam
+			priority -= s.schedulerConfig.PrioritySettings.HighLoadAdjustment * 2 // Significant penalty for potential spam
 		} else if p50Baseline > 0 && requestInterval < p50Baseline/2 {
-			basePriority -= s.schedulerConfig.PrioritySettings.HighLoadAdjustment // Moderate penalty for fast requests
+			priority -= s.schedulerConfig.PrioritySettings.HighLoadAdjustment // Moderate penalty for fast requests
 		}
-	}
-
-	// Factor 3: Message pattern analysis
-	if s.schedulerConfig.MessageClassification.Enabled {
-		if s.schedulerConfig.MessageClassification.SpamDetection && utils.IsSpamPattern(message, s.schedulerConfig.MessageClassification.SpamKeywords) {
-			basePriority = s.schedulerConfig.PrioritySettings.MinPriority // Lowest priority for spam
-		} else if utils.IsHighPriorityMessage(message, s.schedulerConfig.MessageClassification.PriorityKeywords) {
-			basePriority = s.schedulerConfig.PrioritySettings.MaxPriority // Highest priority for important messages
-		}
-	}
-
-	// Factor 4: User behavior analysis (simplified)
-	if utils.IsFastUser(userID) {
-		basePriority += s.schedulerConfig.PrioritySettings.FastUserBonus // Higher priority for active users
 	}
 
 	// Ensure priority is within valid range
-	if basePriority < s.schedulerConfig.PrioritySettings.MinPriority {
-		basePriority = s.schedulerConfig.PrioritySettings.MinPriority
-	} else if basePriority > s.schedulerConfig.PrioritySettings.MaxPriority {
-		basePriority = s.schedulerConfig.PrioritySettings.MaxPriority
+	if priority < s.schedulerConfig.PrioritySettings.MinPriority {
+		priority = s.schedulerConfig.PrioritySettings.MinPriority
+	} else if priority > s.schedulerConfig.PrioritySettings.MaxPriority {
+		priority = s.schedulerConfig.PrioritySettings.MaxPriority
 	}
 
-	return basePriority
+	return priority
+}
+
+// determineContentType analyzes message content to determine its type
+func (s *Scheduler) determineContentType(message string) string {
+	// Simple content type detection based on message patterns
+	if len(message) == 0 {
+		return "empty"
+	}
+
+	// Check for common patterns
+	if len(message) > 1000 {
+		return "long_text"
+	}
+
+	// Check for URLs or file references
+	if utils.ContainsURL(message) {
+		return "url"
+	}
+
+	// Default to text
+	return "text"
+}
+
+// SetPriorityStrategy allows changing the priority calculation strategy
+func (s *Scheduler) SetPriorityStrategy(strategy PriorityStrategy) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.priorityStrategy = strategy
 }
 
 // worker processes requests from the worker pool.

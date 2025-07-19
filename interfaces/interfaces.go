@@ -85,6 +85,9 @@ type Observer interface {
 
 	// HighLoadThreshold returns the current high-load threshold
 	HighLoadThreshold() time.Duration
+
+	// GetCurrentLoad returns the current system load
+	GetCurrentLoad() float64
 }
 
 // ConfigProvider defines the interface for configuration management

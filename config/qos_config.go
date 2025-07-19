@@ -30,6 +30,8 @@ type QoSConfig struct {
 	// Adaptive Throttling
 	AdaptiveThrottling struct {
 		Enabled        bool    `yaml:"enabled"`
+		BaseInterval   int     `yaml:"base_interval"`
+		MaxInterval    int     `yaml:"max_interval"`
 		BaseThreshold  int     `yaml:"base_threshold"`
 		MaxThreshold   int     `yaml:"max_threshold"`
 		AdaptationRate float64 `yaml:"adaptation_rate"`
@@ -98,12 +100,16 @@ func GetDefaultQoSConfig() QoSConfig {
 		},
 		AdaptiveThrottling: struct {
 			Enabled        bool    `yaml:"enabled"`
+			BaseInterval   int     `yaml:"base_interval"`
+			MaxInterval    int     `yaml:"max_interval"`
 			BaseThreshold  int     `yaml:"base_threshold"`
 			MaxThreshold   int     `yaml:"max_threshold"`
 			AdaptationRate float64 `yaml:"adaptation_rate"`
 			CooldownPeriod string  `yaml:"cooldown_period"`
 		}{
 			Enabled:        true,
+			BaseInterval:   100,
+			MaxInterval:    1000,
 			BaseThreshold:  100,
 			MaxThreshold:   1000,
 			AdaptationRate: 0.05,

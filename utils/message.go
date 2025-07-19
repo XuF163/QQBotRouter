@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/md5"
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -95,6 +96,14 @@ func IsFastUser(userID string) bool {
 	hash := md5.Sum([]byte(userID))
 	// Use hash to create consistent but pseudo-random classification
 	return hash[0]%4 == 0 // 25% of users are considered "fast"
+}
+
+// ContainsURL checks if the message contains any URLs
+func ContainsURL(message string) bool {
+	// Simple URL detection regex
+	urlPattern := `https?://[^\s]+`
+	matched, _ := regexp.MatchString(urlPattern, message)
+	return matched
 }
 
 // CalculateMessagePriority calculates message priority based on content and user with provided keywords

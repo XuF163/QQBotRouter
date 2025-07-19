@@ -5,8 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/montanaflynn/stats"
 	"qqbotrouter/interfaces"
+
+	"github.com/montanaflynn/stats"
 )
 
 // Ensure Observer implements Observer interface
@@ -46,14 +47,55 @@ func (o *Observer) HighLoadThreshold() time.Duration {
 	return o.highLoadThreshold
 }
 
-// Run starts the observer's monitoring loop.
-func (o *Observer) Run(ticker *time.Ticker) {
-	for range ticker.C {
-		o.updateHighLoadThreshold()
+// GetCurrentLoad returns the current system load based on recent latencies
+func (o *Observer) GetCurrentLoad() float64 {
+	o.mutex.RLock()
+	defer o.mutex.RUnlock()
+
+	if len(o.latencies) == 0 {
+		return 0.0
+	}
+
+	// Calculate load as the ratio of current average latency to threshold
+	var sum float64
+	for _, latency := range o.latencies {
+		sum += latency
+	}
+	avgLatency := sum / float64(len(o.latencies))
+	thresholdMs := float64(o.latencyThreshold.Milliseconds())
+
+	if thresholdMs == 0 {
+		return 0.0
+	}
+
+	load := avgLatency / thresholdMs
+	if load > 1.0 {
+		return 1.0
+	}
+	return load
+}
+
+// Run starts the observer with context support
+func (o *Observer) Run(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			o.updateHighLoadThreshold()
+		}
 	}
 }
 
-// RunWithContext starts the observer's monitoring loop with context support for graceful shutdown.
+// GetTickerInterval returns the interval for periodic execution
+func (o *Observer) GetTickerInterval() string {
+	return "10s"
+}
+
+// RunWithContext starts the observer with context support (deprecated, use Run instead)
 func (o *Observer) RunWithContext(ctx context.Context, ticker *time.Ticker) {
 	defer ticker.Stop()
 	for {

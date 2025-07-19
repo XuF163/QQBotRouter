@@ -12,12 +12,13 @@ import (
 
 // QoSManager manages Quality of Service policies
 type QoSManager struct {
-	qosConfig     *config.QoSConfig
-	loadProvider  interfaces.LoadProvider
-	statsProvider interfaces.StatProvider
-	observer      interfaces.Observer
-	logger        *zap.Logger
-	mu            sync.RWMutex
+	qosConfig          *config.QoSConfig
+	loadProvider       interfaces.LoadProvider
+	statsProvider      interfaces.StatProvider
+	observer           interfaces.Observer
+	logger             *zap.Logger
+	mu                 sync.RWMutex
+	throttlingStrategy ThrottlingStrategy // Strategy for adaptive throttling
 
 	// Circuit breaker state
 	circuitOpen     bool
@@ -37,13 +38,14 @@ type QoSManager struct {
 // NewQoSManager creates a new QoS manager
 func NewQoSManager(qosConfig *config.QoSConfig, loadProvider interfaces.LoadProvider, statsProvider interfaces.StatProvider, observer interfaces.Observer, logger *zap.Logger) *QoSManager {
 	return &QoSManager{
-		qosConfig:      qosConfig,
-		loadProvider:   loadProvider,
-		statsProvider:  statsProvider,
-		observer:       observer,
-		logger:         logger,
-		throttleLevel:  0.0,
-		lastAdjustment: time.Now(),
+		qosConfig:          qosConfig,
+		loadProvider:       loadProvider,
+		statsProvider:      statsProvider,
+		observer:           observer,
+		logger:             logger,
+		throttleLevel:      0.0,
+		lastAdjustment:     time.Now(),
+		throttlingStrategy: NewAdaptiveThrottlingStrategy(0.7, 0.3), // Default strategy
 	}
 }
 
@@ -144,7 +146,7 @@ func (qm *QoSManager) updateCircuitBreaker(success bool) {
 	}
 }
 
-// updateAdaptiveThrottling adjusts throttle level based on system performance
+// updateAdaptiveThrottling adjusts throttle level using the configured strategy
 func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
 	if !qm.qosConfig.AdaptiveThrottling.Enabled {
 		return
@@ -160,42 +162,39 @@ func (qm *QoSManager) updateAdaptiveThrottling(responseTime time.Duration) {
 		return
 	}
 
-	currentLoad := qm.loadProvider.Get()
-	maxLoad := qm.qosConfig.SystemLimits.MaxLoad
-	loadRatio := float64(currentLoad) / float64(maxLoad)
-
-	// Get baseline from stats provider
-	p90Baseline := qm.statsProvider.P90()
-
-	// Get P95 high load threshold from observer
-	p95HighLoadThreshold := qm.observer.HighLoadThreshold()
-
-	// Adjust throttle level based on load, response time, and P95 threshold
-	throttleAdjustment := qm.qosConfig.SystemLimits.ThrottleAdjustment
-
-	// Significantly increase throttling if response time exceeds P95 threshold
-	if p95HighLoadThreshold > 0 && responseTime > p95HighLoadThreshold {
-		// Aggressive throttling when exceeding P95 threshold
-		qm.throttleLevel = min(1.0, qm.throttleLevel+throttleAdjustment*2)
-		qm.logger.Warn("Aggressive throttling due to P95 threshold exceeded",
-			zap.Float64("throttle_level", qm.throttleLevel),
-			zap.Duration("response_time", responseTime),
-			zap.Duration("p95_threshold", p95HighLoadThreshold))
-	} else if loadRatio > qm.qosConfig.SystemLimits.HighLoadThreshold || (p90Baseline > 0 && responseTime > p90Baseline*2) {
-		// Standard throttling increase
-		qm.throttleLevel = min(1.0, qm.throttleLevel+throttleAdjustment)
-		qm.logger.Info("Increased throttle level",
-			zap.Float64("throttle_level", qm.throttleLevel),
-			zap.Float64("load_ratio", loadRatio))
-	} else if loadRatio < qm.qosConfig.SystemLimits.LowLoadThreshold && (p90Baseline == 0 || responseTime < p90Baseline) && (p95HighLoadThreshold == 0 || responseTime < time.Duration(float64(p95HighLoadThreshold)*0.8)) {
-		// Decrease throttling only when well below all thresholds
-		qm.throttleLevel = max(0.0, qm.throttleLevel-throttleAdjustment/2)
-		qm.logger.Info("Decreased throttle level",
-			zap.Float64("throttle_level", qm.throttleLevel),
-			zap.Float64("load_ratio", loadRatio))
+	// Use strategy pattern for throttling calculation
+	newInterval, err := qm.throttlingStrategy.UpdateThrottling(qm.qosConfig, qm.observer, qm.statsProvider)
+	if err != nil {
+		qm.logger.Error("Failed to update throttling", zap.Error(err))
+		return
 	}
 
+	// Convert interval to throttle level (0.0 to 1.0)
+	baseInterval := time.Duration(qm.qosConfig.AdaptiveThrottling.BaseInterval) * time.Millisecond
+	maxInterval := time.Duration(qm.qosConfig.AdaptiveThrottling.MaxInterval) * time.Millisecond
+
+	if newInterval <= baseInterval {
+		qm.throttleLevel = 0.0
+	} else if newInterval >= maxInterval {
+		qm.throttleLevel = 1.0
+	} else {
+		// Linear interpolation between base and max interval
+		qm.throttleLevel = float64(newInterval-baseInterval) / float64(maxInterval-baseInterval)
+	}
+
+	qm.logger.Info("Updated throttle level using strategy",
+		zap.Float64("throttle_level", qm.throttleLevel),
+		zap.Duration("new_interval", newInterval),
+		zap.Duration("response_time", responseTime))
+
 	qm.lastAdjustment = time.Now()
+}
+
+// SetThrottlingStrategy allows changing the throttling strategy
+func (qm *QoSManager) SetThrottlingStrategy(strategy ThrottlingStrategy) {
+	qm.mu.Lock()
+	defer qm.mu.Unlock()
+	qm.throttlingStrategy = strategy
 }
 
 // updatePerformanceMetrics updates performance tracking metrics
@@ -223,20 +222,25 @@ func (qm *QoSManager) GetMetrics() map[string]interface{} {
 	}
 }
 
-// Start starts the QoS manager background processes
+// Run starts the QoS manager background processes
+func (qm *QoSManager) Run(ctx context.Context) error {
+	return qm.monitoringLoop(ctx)
+}
+
+// Start starts the QoS manager background processes (deprecated, use Run instead)
 func (qm *QoSManager) Start(ctx context.Context) {
 	go qm.monitoringLoop(ctx)
 }
 
 // monitoringLoop runs periodic QoS monitoring and adjustments
-func (qm *QoSManager) monitoringLoop(ctx context.Context) {
+func (qm *QoSManager) monitoringLoop(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-ticker.C:
 			qm.performPeriodicAdjustments()
 		}

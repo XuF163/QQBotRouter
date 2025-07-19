@@ -21,6 +21,7 @@ import (
 	"qqbotrouter/observer"
 	"qqbotrouter/qos"
 	"qqbotrouter/scheduler"
+	"qqbotrouter/services"
 	"qqbotrouter/stats"
 )
 
@@ -158,13 +159,15 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Start all background services with context
-	go statsAnalyzer.RunWithContext(ctx, time.NewTicker(30*time.Second))
-	go qosObserver.RunWithContext(ctx, time.NewTicker(10*time.Second))
-	go mlTrainer.RunWithContext(ctx, time.NewTicker(5*time.Minute))
-	go qosManager.Start(ctx)
-	go mainScheduler.RunWithContext(ctx)
+	// Start all background services using service manager
+	serviceManager := services.NewServiceManager(logger)
+	serviceManager.AddService(statsAnalyzer)
+	serviceManager.AddService(qosObserver)
+	serviceManager.AddService(mlTrainer)
+	serviceManager.AddService(qosManager)
+	serviceManager.AddService(mainScheduler)
 
+	serviceManager.StartAll(ctx)
 	logger.Info("All QoS services have been initialized and started.")
 
 	// 4. Configure autocert manager
@@ -228,6 +231,11 @@ func main() {
 
 	// Cancel context to stop all background services
 	cancel()
+
+	// Wait for all background services to complete
+	logger.Info("Waiting for background services to complete...")
+	serviceManager.WaitForAll()
+	logger.Info("All background services stopped")
 
 	// Shutdown HTTP server with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
