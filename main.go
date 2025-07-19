@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"qqbotrouter/load"
 	"qqbotrouter/ml_trainer"
 	"qqbotrouter/observer"
+	"qqbotrouter/qos"
 	"qqbotrouter/scheduler"
 	"qqbotrouter/stats"
 )
@@ -70,12 +72,15 @@ func main() {
 	statsAnalyzer := stats.NewStatsAnalyzer(cfg.IntelligentSchedulingPolicy.DynamicBaselineAnalysis.MinDataPointsForBaseline)
 	qosObserver := observer.NewObserver(time.Duration(cfg.IntelligentSchedulingPolicy.DynamicLoadTuning.LatencyThreshold)*time.Millisecond, 100)
 	mlTrainer := ml_trainer.NewMLTrainer(statsAnalyzer)
+	qosManager := qos.NewQoSManager(cfg, loadCounter, statsAnalyzer, logger)
 	mainScheduler := scheduler.NewScheduler(statsAnalyzer, cfg.IntelligentSchedulingPolicy.CognitiveScheduling, loadCounter)
 
 	// 3. Start all background services
+	ctx := context.Background()
 	go statsAnalyzer.Run(time.NewTicker(1 * time.Minute))
 	go qosObserver.Run(time.NewTicker(1 * time.Minute))
 	go mlTrainer.Run(time.NewTicker(5 * time.Minute))
+	go qosManager.Start(ctx)
 	go mainScheduler.Run()
 
 	logger.Info("All QoS services have been initialized and started.")
@@ -96,7 +101,7 @@ func main() {
 
 	// 6. Set up HTTP/S servers
 	mux := http.NewServeMux()
-	mux.Handle("/", handler.NewWebhookHandler(logger, mainScheduler))
+	mux.Handle("/", handler.NewWebhookHandler(logger, mainScheduler, qosManager))
 
 	server := &http.Server{
 		Addr:      ":" + cfg.HTTPSPort,
