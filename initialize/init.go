@@ -85,17 +85,8 @@ intelligent_scheduling_policy:
 `
 )
 
-// CheckConfig 检查并创建配置文件和目录结构
+// CheckConfig 检查并创建必要的目录结构
 func CheckConfig() error {
-	// 检查并创建 config.yaml 文件（在项目根目录）
-	if _, err := os.Stat(configYamlFile); os.IsNotExist(err) {
-		fmt.Println("config.yaml not found, creating from template...")
-		if err := os.WriteFile(configYamlFile, []byte(configYamlContent), 0644); err != nil {
-			return fmt.Errorf("failed to create config.yaml: %w", err)
-		}
-		fmt.Printf("Created config file: %s\n", configYamlFile)
-	}
-
 	// 检查并创建 ssl 目录（在项目根目录）
 	if _, err := os.Stat(sslDir); os.IsNotExist(err) {
 		fmt.Println("SSL directory not found, creating...")
@@ -118,6 +109,6 @@ func CheckConfig() error {
 		}
 	}
 
-	fmt.Println("Configuration initialization completed successfully.")
+	fmt.Println("Directory initialization completed successfully.")
 	return nil
 }
