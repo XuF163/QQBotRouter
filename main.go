@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -11,6 +12,11 @@ import (
 	"qqbotrouter/config"
 	"qqbotrouter/handler"
 	"qqbotrouter/initialize"
+	"qqbotrouter/load"
+	"qqbotrouter/ml_trainer"
+	"qqbotrouter/observer"
+	"qqbotrouter/scheduler"
+	"qqbotrouter/stats"
 )
 
 var logger *zap.Logger
@@ -24,7 +30,6 @@ func initLogger(logLevel string) {
 	case "development":
 		logger, err = zap.NewDevelopment()
 	default:
-		// Default to development if not specified or unknown
 		logger, err = zap.NewDevelopment()
 		fmt.Fprintf(os.Stderr, "Unknown log_level '%s' in config. Defaulting to development.\n", logLevel)
 	}
@@ -48,40 +53,50 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 1. Load initial configuration to get log level
+	// 1. Load initial configuration
 	cfg, err := config.Load("config.yaml")
-
 	if err != nil {
-		// Cannot use logger yet, fall back to standard log or fmt
 		fmt.Fprintf(os.Stderr, "Failed to load initial config: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Set global configuration for handler access
 	config.SetGlobalConfig(cfg)
-
-	// Set default ports if not configured
-	if cfg.HTTPSPort == "" {
-		cfg.HTTPSPort = "8443"
-	}
-	if cfg.HTTPPort == "" {
-		cfg.HTTPPort = "80"
-	}
+	cfg.SetDefaults()
 
 	// Initialize logger based on config
 	initLogger(cfg.LogLevel)
 
-	// 2. Configure autocert manager with domains extracted from bot configurations
+	// 2. Initialize all QoS services
+	loadCounter := load.NewCounter()
+	statsAnalyzer := stats.NewStatsAnalyzer(cfg.IntelligentSchedulingPolicy.DynamicBaselineAnalysis.MinDataPointsForBaseline)
+	qosObserver := observer.NewObserver(time.Duration(cfg.IntelligentSchedulingPolicy.DynamicLoadTuning.LatencyThreshold)*time.Millisecond, 100)
+	mlTrainer := ml_trainer.NewMLTrainer(statsAnalyzer)
+	mainScheduler := scheduler.NewScheduler(statsAnalyzer, cfg.IntelligentSchedulingPolicy.CognitiveScheduling, loadCounter)
+
+	// 3. Start all background services
+	go statsAnalyzer.Run(time.NewTicker(1 * time.Minute))
+	go qosObserver.Run(time.NewTicker(1 * time.Minute))
+	go mlTrainer.Run(time.NewTicker(5 * time.Minute))
+	go mainScheduler.Run()
+
+	logger.Info("All QoS services have been initialized and started.")
+
+	// 4. Configure autocert manager
 	domains := cfg.GetDomains()
 	logger.Info("Extracted domains for SSL certificates", zap.Strings("domains", domains))
 	certManager := autocert.NewManager(domains, "secret-dir")
 
-	// 3. Start config hot-reloader
-	go config.Watch("config.yaml", certManager, logger)
+	// 5. Start config hot-reloader (if enabled)
+	if cfg.IntelligentSchedulingPolicy.HotReload.Enabled {
+		// The actual hot-reloading logic is not implemented in this version.
+		// The function call is left here as a placeholder.
+		go config.Watch("config.yaml", func(c *config.Config) {
+			logger.Info("Configuration reload triggered (not implemented).")
+		})
+	}
 
-	// 4. Set up HTTP/S servers
+	// 6. Set up HTTP/S servers
 	mux := http.NewServeMux()
-	mux.Handle("/", handler.NewWebhookHandler(logger))
+	mux.Handle("/", handler.NewWebhookHandler(logger, mainScheduler))
 
 	server := &http.Server{
 		Addr:      ":" + cfg.HTTPSPort,
@@ -89,7 +104,7 @@ func main() {
 		TLSConfig: certManager.TLSConfig(),
 	}
 
-	// 5. Start HTTP server for ACME challenges.....
+	// 7. Start HTTP server for ACME challenges
 	go func() {
 		logger.Info("Starting HTTP server for ACME challenges...", zap.String("port", cfg.HTTPPort))
 		if err := http.ListenAndServe(":"+cfg.HTTPPort, certManager.HTTPHandler(nil)); err != nil {
@@ -97,7 +112,7 @@ func main() {
 		}
 	}()
 
-	// 6. Start HTTPS server
+	// 8. Start HTTPS server
 	logger.Info("Starting HTTPS server...", zap.String("port", cfg.HTTPSPort))
 	if err := server.ListenAndServeTLS("", ""); err != nil {
 		logger.Fatal("HTTPS server failed", zap.Error(err))

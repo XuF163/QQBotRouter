@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"qqbotrouter/load"
 )
 
 // ForwardResult represents the result of a forward operation
@@ -18,34 +20,11 @@ type ForwardResult struct {
 	Error       error
 }
 
-// ForwardRequest asynchronously forwards the request to a destination.
-// Deprecated: Use ForwardRequestWithResult for better error handling
-func ForwardRequest(logger *zap.Logger, destination string, body []byte, header http.Header) {
-	req, err := http.NewRequest("POST", destination, bytes.NewReader(body))
-	if err != nil {
-		logger.Error("Failed to create forward request",
-			zap.String("destination", destination),
-			zap.Error(err))
-		return
-	}
-	req.Header = header.Clone()
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Debug("Failed to forward request (this is normal for backup endpoints)",
-			zap.String("destination", destination),
-			zap.Error(err))
-		return
-	}
-	defer resp.Body.Close()
-	logger.Info("Successfully forwarded request",
-		zap.String("destination", destination),
-		zap.Int("status_code", resp.StatusCode))
-}
-
 // ForwardRequestWithResult forwards the request and returns the result via channel
-func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destination string, body []byte, header http.Header, resultChan chan<- ForwardResult) {
+func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destination string, body []byte, header http.Header, resultChan chan<- ForwardResult, loadCounter *load.Counter) {
+	loadCounter.Increment()
+	defer loadCounter.Decrement()
+
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("Panic in ForwardRequestWithResult",
@@ -108,7 +87,7 @@ func ForwardRequestWithResult(ctx context.Context, logger *zap.Logger, destinati
 }
 
 // ForwardToMultipleDestinations forwards to multiple destinations and waits for all results
-func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, destinations []string, body []byte, header http.Header, timeout time.Duration) []ForwardResult {
+func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, destinations []string, body []byte, header http.Header, timeout time.Duration, loadCounter *load.Counter) []ForwardResult {
 	if len(destinations) == 0 {
 		return []ForwardResult{}
 	}
@@ -125,7 +104,7 @@ func ForwardToMultipleDestinations(ctx context.Context, logger *zap.Logger, dest
 		wg.Add(1)
 		go func(destination string) {
 			defer wg.Done()
-			ForwardRequestWithResult(ctxWithTimeout, logger, destination, body, header, resultChan)
+			ForwardRequestWithResult(ctxWithTimeout, logger, destination, body, header, resultChan, loadCounter)
 		}(dest)
 	}
 
